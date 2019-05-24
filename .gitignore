@@ -1,0 +1,8 @@
+*.swp
+*.o
+
+local
+server
+curltest
+
+node_modules
