@@ -2,24 +2,15 @@
 
 char reqAddr[259];
 
-static int handleIn(struct evinfo *einfo) {
+static int handleInData(struct evinfo *einfo, unsigned char *buf,
+                        ssize_t numRead) {
   int outfd, infd = einfo->fd;
-  ssize_t numRead;
   int cmd, atyp;
   struct epoll_event ev;
 
-  numRead = recv(infd, buf, BUF_SIZE, 0);
-  if (numRead == -1) {
-    perror("handleIn recv");
-    return -1;
-  }
-  if (numRead == 0) {
-    return -1;
-  }
-
   if (einfo->stage == 0) {
-    if (send(infd, "\x05\x00", 2, 0) == -1) {
-      perror("handleIn: stage0: send");
+    if (sendOrStore(infd, "\x05\x00", 2, 0, einfo, 1) == -1) {
+      eprint(STDOUT_FILENO, "sendOrStore, stage0\n", INFO_LEVEL, 0);
       return -1;
     }
     if (connOut(einfo, REMOTE_HOST, REMOTE_PORT) == -1) {
@@ -43,27 +34,30 @@ static int handleIn(struct evinfo *einfo) {
       // CONNECT
       if (atyp == '\x01') {
         // IP V4 address
-        write(2, "4\n", 2);
+        eprint(STDOUT_FILENO, "Not implemented ipv4, stage1\n", INFO_LEVEL, 0);
         return -1;
       } else if (atyp == '\x03') {
         // DOMAINNAME
         memcpy(reqAddr, buf + 3, 4 + buf[4]);
       } else if (atyp == '\x04') {
         // IP V6 address
-        write(2, "6\n", 2);
+        eprint(STDOUT_FILENO, "Not implemented ipv6, stage1\n", INFO_LEVEL, 0);
         return -1;
       } else {
         return -1;
       }
 
       outfd = einfo->ptr->fd;
-      if (send(outfd, reqAddr, 4 + buf[4], 0) == -1) {
-        perror("handleIn: stage1: send reqAddr");
+      if (sendOrStore(outfd, reqAddr, 4 + buf[4], 0, einfo, 0) == -1) {
+        eprint(STDOUT_FILENO, "sendOrStore, stage1, write to outfd\n",
+               INFO_LEVEL, 0);
         return -1;
       }
 
-      if (send(infd, "\x05\x00\x00\x01\x00\x00\x00\x00\x00\x01", 10, 0) == -1) {
-        perror("handleIn: stage1: send connected info");
+      if (sendOrStore(infd, "\x05\x00\x00\x01\x00\x00\x00\x00\x00\x01", 10, 0,
+                      einfo, 1) == -1) {
+        eprint(STDOUT_FILENO, "sendOrStore, stage1, write to infd\n",
+               INFO_LEVEL, 0);
         return -1;
       }
 
@@ -79,8 +73,8 @@ static int handleIn(struct evinfo *einfo) {
     }
   } else if (einfo->stage == 2) {
     outfd = einfo->ptr->fd;
-    if (send(outfd, buf, numRead, 0) == -1) {
-      perror("handleIn: stage4. send");
+    if (sendOrStore(outfd, buf, numRead, 0, einfo, 0) == -1) {
+      eprint(STDOUT_FILENO, "sendOrStore, stage2\n", INFO_LEVEL, 0);
       return -1;
     }
   } else {
@@ -89,4 +83,7 @@ static int handleIn(struct evinfo *einfo) {
   return 0;
 }
 
-int main(int argc, char **argv) { eloop(LOCAL_PORT, handleIn); }
+int main(int argc, char **argv) {
+  serverflag = 0;
+  eloop(LOCAL_PORT, handleInData);
+}

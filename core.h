@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,8 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include "crypto.h"
 
 #ifndef REMOTE_HOST
 #define REMOTE_HOST "127.0.0.1"
@@ -35,24 +38,35 @@ struct evinfo {
   enum evtype type;
   int fd;
   int stage;
+  int outconnected;
+  void *encryptCtx;
+  void *decryptCtx;
+  int bufNum;
+  int bufLen;
+  char *buf;
   struct evinfo *ptr;
 };
 
 int efd;
-char buf[BUF_SIZE];
+unsigned char buf[BUF_SIZE];
+unsigned char tmpBuf[BUF_SIZE + 512];
+int serverflag;
+
+enum elevel { LOWEST_LEVEL, INFO_LEVEL, ERR_LEVEL, HIGHEST_LEVEL };
+
+void eprint(int, unsigned char *, int, int);
 
 void clean(struct evinfo *einfo);
 
+int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
+                int storeSelf);
+
 struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
                     uint32_t events);
+int connOut(struct evinfo *, char *, char *);
 
-int connOut(struct evinfo *einfo, char *outhost, char *outport);
-
-int connOutCpl(struct evinfo *einfo);
-
-int handleOut(struct evinfo *einfo);
-
-void eloop(char *port, int (*handleIn)(struct evinfo *));
+void eloop(char *port,
+           int (*handleIn)(struct evinfo *, unsigned char *, ssize_t));
 
 int inetConnect(const char *host, const char *service, int type);
 

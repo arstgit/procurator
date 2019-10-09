@@ -2,21 +2,12 @@
 
 static char outhost[256], outport[6];
 
-static int handleIn(struct evinfo *einfo) {
+static int handleInData(struct evinfo *einfo, unsigned char *buf,
+                        ssize_t numRead) {
   int outfd, infd = einfo->fd;
-  ssize_t numRead, consume;
+  ssize_t consume;
   int atyp, headerlen;
   struct epoll_event ev;
-
-  numRead = recv(infd, buf, BUF_SIZE, MSG_PEEK);
-  if (numRead == -1) {
-    perror("recv handleIn MSG_PEEK");
-    return -1;
-  }
-  if (numRead == 0) {
-    return -1;
-  }
-  consume = numRead;
 
   if (einfo->stage == 0) {
 
@@ -31,6 +22,7 @@ static int handleIn(struct evinfo *einfo) {
     atyp = buf[0];
     if (atyp == '\x01') {
       // IP V4 address
+      eprint(STDOUT_FILENO, "Not implemented ipv4, stage0\n", INFO_LEVEL, 0);
       return -1;
     } else if (atyp == '\x03') {
       // DOMAINNAME
@@ -41,34 +33,41 @@ static int handleIn(struct evinfo *einfo) {
       consume = headerlen;
     } else if (atyp == '\x04') {
       // IP V6 address
+      eprint(STDOUT_FILENO, "Not implemented ipv6, stage0\n", INFO_LEVEL, 0);
+      return -1;
+    } else {
+      eprint(STDOUT_FILENO, "Wrong atype\n", INFO_LEVEL, 0);
       return -1;
     }
 
     if (connOut(einfo, outhost, outport) == -1) {
       return -1;
     }
+    // to do, numRead may exceed consume
+    if (numRead > consume) {
+      outfd = einfo->ptr->fd;
+      if (sendOrStore(outfd, buf + consume, numRead - consume, 0, einfo, 0) ==
+          -1) {
+        eprint(STDOUT_FILENO, "sendOrStore, stage0\n", INFO_LEVEL, 0);
+        return -1;
+      }
+    }
 
     einfo->stage = 1;
   } else if (einfo->stage == 1) {
     outfd = einfo->ptr->fd;
-    if (send(outfd, buf, numRead, 0) == -1) {
-      perror("send: handleIn: stage1");
+    if (sendOrStore(outfd, buf, numRead, 0, einfo, 0) == -1) {
+      eprint(STDOUT_FILENO, "sendOrStore, stage1\n", INFO_LEVEL, 0);
       return -1;
     }
   } else {
     return -1;
   }
 
-  numRead = recv(infd, buf, consume, 0);
-  if (numRead == -1) {
-    perror("handleIn recv consume");
-    return -1;
-  }
-  if (numRead == 0) {
-    return -1;
-  }
-
   return 0;
 }
 
-int main(int argc, char **argv) { eloop(REMOTE_PORT, handleIn); }
+int main(int argc, char **argv) {
+  serverflag = 1;
+  eloop(REMOTE_PORT, handleInData);
+}
