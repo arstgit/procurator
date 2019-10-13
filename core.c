@@ -46,7 +46,7 @@ static int setnonblocking(int fd) {
 int inetConnect(const char *host, const char *service, int type) {
   struct addrinfo hints;
   struct addrinfo *result, *rp;
-  int sfd, s, flags, conn;
+  int sfd, s, flags, conn, optval;
 
   memset(&hints, 0, sizeof(struct addrinfo));
   hints.ai_canonname = NULL;
@@ -65,6 +65,13 @@ int inetConnect(const char *host, const char *service, int type) {
     if (sfd == -1)
       continue;
 
+    optval = 1;
+    if (setsockopt(sfd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval)) ==
+        -1) {
+      close(sfd);
+      sfd = -1;
+      continue;
+    }
     if (setnonblocking(sfd) == -1) {
       close(sfd);
       sfd = -1;
@@ -118,6 +125,14 @@ int inetPassiveSocket(const char *service, int type, socklen_t *addrlen,
         return -1;
       }
 
+      optval = 1;
+      if (setsockopt(sfd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval)) ==
+          -1) {
+        close(sfd);
+        freeaddrinfo(result);
+        return -1;
+      }
+
       if (setnonblocking(sfd) == -1) {
         close(sfd);
         freeaddrinfo(result);
@@ -150,23 +165,13 @@ int inetListen(const char *service, int backlog, socklen_t *addrlen) {
   return inetPassiveSocket(service, SOCK_STREAM, addrlen, 1, backlog);
 }
 
-void clean(struct evinfo *einfo) {
-  if (einfo->ptr != NULL) {
-    if (close(einfo->ptr->fd) == -1) {
-      perror("clean: close1");
-      exit(EXIT_FAILURE);
-    }
-
-    freeCipher(einfo->ptr->encryptCtx);
-    freeCipher(einfo->ptr->decryptCtx);
-    if (einfo->ptr->bufLen > 0) {
-      free(einfo->ptr->buf);
-    }
-    free(einfo->ptr);
+void cleanOne(struct evinfo *einfo) {
+  if (einfo->bufEndIndex - einfo->bufStartIndex > 0) {
+    printf("clean with Num: %d\n", einfo->bufEndIndex - einfo->bufStartIndex);
+    fflush(stdout);
   }
-
   if (close(einfo->fd) == -1) {
-    perror("clean: close2");
+    perror("clean: close");
     exit(EXIT_FAILURE);
   }
 
@@ -178,23 +183,42 @@ void clean(struct evinfo *einfo) {
   free(einfo);
 }
 
+void clean(struct evinfo *einfo) {
+  if (einfo->ptr != NULL) {
+    cleanOne(einfo->ptr);
+  }
+  cleanOne(einfo);
+}
+
 static int trySend(struct evinfo *einfo) {
-  if (einfo->bufNum > 0) {
-    if (send(einfo->fd, einfo->buf, einfo->bufNum, 0) == -1) {
+  ssize_t numSend;
+  size_t len;
+  unsigned char *buf;
+
+  len = einfo->bufEndIndex - einfo->bufStartIndex;
+  buf = einfo->buf + einfo->bufStartIndex;
+  for (; len > 0;) {
+    numSend = send(einfo->fd, buf, len, 0);
+    if (numSend == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        return 0;
+        break;
       } else {
-        perror("send: trySend");
+        perror("send: trysend");
         return -1;
       }
+    } else {
+      len -= numSend;
+      buf = buf + numSend;
     }
-    einfo->bufNum = 0;
   }
+  einfo->bufStartIndex = einfo->bufEndIndex - len;
   return 0;
 }
 
 int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
                 int storeSelf) {
+  ssize_t numSend;
+
   einfo = storeSelf == 1 ? einfo : einfo->ptr;
 
   if ((serverflag == 1 && einfo->type == IN) ||
@@ -208,45 +232,51 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
     len = tmpLen;
   }
 
-  if (einfo->bufNum > 0) {
-    if (einfo->bufNum + len > einfo->bufLen) {
-      einfo->buf = realloc(einfo->buf, 2 * (einfo->bufNum + len));
+  if (einfo->bufEndIndex > 0) {
+    if (einfo->bufEndIndex + len > einfo->bufLen) {
+      einfo->buf = realloc(einfo->buf, BUF_FACTOR * (einfo->bufEndIndex + len));
       if (einfo->buf == NULL) {
         perror("realloc");
         exit(EXIT_FAILURE);
       }
-      einfo->bufLen = 2 * (einfo->bufNum + len);
+      einfo->bufLen = BUF_FACTOR * (einfo->bufEndIndex + len);
     }
 
-    memcpy(einfo->buf + einfo->bufNum, buf, len);
-    einfo->bufNum = einfo->bufNum + len;
+    memcpy(einfo->buf + einfo->bufEndIndex, buf, len);
+    einfo->bufEndIndex = einfo->bufEndIndex + len;
 
-    buf = einfo->buf;
-    len = einfo->bufNum;
+    len = einfo->bufEndIndex - einfo->bufStartIndex;
+    buf = einfo->buf + einfo->bufStartIndex;
   }
 
-  if (send(fd, buf, len, flags) == -1) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      if (einfo->bufNum == 0) {
-        if (len > einfo->bufLen) {
-          einfo->buf = realloc(einfo->buf, 2 * len);
-          if (einfo->buf == NULL) {
-            perror("realloc");
-            exit(EXIT_FAILURE);
+  for (; len > 0;) {
+    numSend = send(fd, buf, len, flags);
+    if (numSend == -1) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (einfo->bufEndIndex == 0) {
+          if (len > einfo->bufLen) {
+            einfo->buf = realloc(einfo->buf, BUF_FACTOR * len);
+            if (einfo->buf == NULL) {
+              perror("realloc");
+              exit(EXIT_FAILURE);
+            }
+            einfo->bufLen = BUF_FACTOR * len;
           }
-          einfo->bufLen = 2 * len;
-        }
 
-        memcpy(einfo->buf, buf, len);
-        einfo->bufNum = len;
+          memcpy(einfo->buf, buf, len);
+          einfo->bufEndIndex = einfo->bufStartIndex + len;
+        }
+        break;
+      } else {
+        perror("send: sendOrStore");
+        return -1;
       }
     } else {
-      perror("send: sendOrStore");
-      return -1;
+      len -= numSend;
+      buf = buf + numSend;
     }
-  } else {
-    einfo->bufNum = 0;
   }
+  einfo->bufStartIndex = einfo->bufEndIndex - len;
 
   return 0;
 }
@@ -274,18 +304,22 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   einfo->outconnected = 0;
   einfo->encryptCtx = NULL;
   einfo->decryptCtx = NULL;
-  einfo->bufNum = 0;
+  einfo->bufStartIndex = 0;
+  einfo->bufEndIndex = 0;
   einfo->bufLen = 0;
   einfo->buf = NULL;
   einfo->ptr = ptr;
 
-  if (initCipher((void **)&einfo->encryptCtx, key, iv, 1) == -1) {
-    perror("initCipher, encrypt");
-    exit(EXIT_FAILURE);
-  }
-  if (initCipher((void **)&einfo->decryptCtx, key, iv, 0) == -1) {
-    perror("initCipher, decrypt");
-    exit(EXIT_FAILURE);
+  if ((serverflag == 1 && einfo->type == IN) ||
+      (serverflag == 0 && einfo->type == OUT)) {
+    if (initCipher((void **)&einfo->encryptCtx, key, iv, 1) == -1) {
+      perror("initCipher, encrypt");
+      exit(EXIT_FAILURE);
+    }
+    if (initCipher((void **)&einfo->decryptCtx, key, iv, 0) == -1) {
+      perror("initCipher, decrypt");
+      exit(EXIT_FAILURE);
+    }
   }
 
   ev.data.ptr = einfo;
@@ -331,7 +365,6 @@ static int connOutConnected(struct evinfo *einfo) {
 
 static int handleOutData(struct evinfo *einfo, unsigned char *buf,
                          ssize_t numRead) {
-  int outfd = einfo->fd;
   int infd = einfo->ptr->fd;
 
   if (sendOrStore(infd, buf, numRead, 0, einfo, 0) == -1) {
@@ -363,7 +396,6 @@ static int handleIn(struct evinfo *einfo,
       return -1;
     }
     if (numRead > 0) {
-
       if ((serverflag == 1 && einfo->type == IN) ||
           (serverflag == 0 && einfo->type == OUT)) {
         int tmpLen;
@@ -435,8 +467,13 @@ void eloop(char *port,
       einfo = (struct evinfo *)evlist[n].data.ptr;
       etype = einfo->type;
 
-      if (evlist[n].events & (EPOLLHUP | EPOLLERR)) {
-        eprint(STDOUT_FILENO, "EPOLLHUP or EPOLLERR\n", INFO_LEVEL, 0);
+      if (evlist[n].events & EPOLLERR) {
+        eprint(STDOUT_FILENO, "EPOLLERR\n", INFO_LEVEL, 0);
+        clean(einfo);
+        continue;
+      }
+      if (evlist[n].events & EPOLLHUP) {
+        eprint(STDOUT_FILENO, "EPOLLHUP\n", INFO_LEVEL, 0);
         clean(einfo);
         continue;
       }
@@ -488,11 +525,13 @@ void eloop(char *port,
           if (trySend(einfo) == -1) {
             perror("trySend: eloop");
             clean(einfo);
+            continue;
           }
         } else if (etype == IN) {
           if (trySend(einfo) == -1) {
             perror("trySend: eloop");
             clean(einfo);
+            continue;
           }
         } else {
           eprint(STDOUT_FILENO, "wrong etype in EPOLLOUT\n", INFO_LEVEL, 0);

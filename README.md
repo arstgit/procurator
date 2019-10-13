@@ -23,7 +23,7 @@ In local machine, run command:
 
 In remote machine, run command:
 ```
-  $ procurator-local
+  $ procurator-server
 ```
 
 ## Test

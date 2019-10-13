@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -29,8 +30,9 @@
 #define LOCAL_PORT "8080"
 #endif
 
-#define BUF_SIZE 16384
+#define BUF_SIZE 1048576
 #define MAX_EVENTS 20
+#define BUF_FACTOR 200
 
 enum evtype { LISTEN, IN, OUT };
 
@@ -41,7 +43,8 @@ struct evinfo {
   int outconnected;
   void *encryptCtx;
   void *decryptCtx;
-  int bufNum;
+  int bufStartIndex;
+  int bufEndIndex;
   int bufLen;
   char *buf;
   struct evinfo *ptr;
@@ -49,7 +52,7 @@ struct evinfo {
 
 int efd;
 unsigned char buf[BUF_SIZE];
-unsigned char tmpBuf[BUF_SIZE + 512];
+unsigned char tmpBuf[BUF_SIZE + 1024];
 int serverflag;
 
 enum elevel { LOWEST_LEVEL, INFO_LEVEL, ERR_LEVEL, HIGHEST_LEVEL };

@@ -44,6 +44,7 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
         eprint(STDOUT_FILENO, "Not implemented ipv6, stage1\n", INFO_LEVEL, 0);
         return -1;
       } else {
+        eprint(STDOUT_FILENO, "Not implemented atype\n", INFO_LEVEL, 0);
         return -1;
       }
 
@@ -64,9 +65,11 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
       einfo->stage = 2;
     } else if (cmd == '\x02') {
       // BIND
+      eprint(STDOUT_FILENO, "Not implemented cmd 02\n", INFO_LEVEL, 0);
       return -1;
     } else if (cmd == '\x03') {
       // UDP ASSOCIATE
+      eprint(STDOUT_FILENO, "Not implemented cmd 03\n", INFO_LEVEL, 0);
       return -1;
     } else {
       return -1;
