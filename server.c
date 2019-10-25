@@ -5,9 +5,7 @@ static char outhost[256], outport[6];
 static int handleInData(struct evinfo *einfo, unsigned char *buf,
                         ssize_t numRead) {
   int outfd, infd = einfo->fd;
-  ssize_t consume;
-  int atyp, headerlen;
-  struct epoll_event ev;
+  int atyp, headerlen, consume;
 
   if (einfo->stage == 0) {
 
@@ -36,6 +34,16 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
       eprint(STDOUT_FILENO, "Not implemented ipv6, stage0\n", INFO_LEVEL, 0);
       return -1;
     } else {
+      printf("numRead: %d val: %02x", numRead, atyp & 0xff);
+      int i = 40;
+      unsigned char *pp = buf;
+      while (i-- > 0) {
+        printf("%02x", (unsigned int)*pp++);
+      }
+      printf("\n");
+
+      fflush(stdout);
+
       eprint(STDOUT_FILENO, "Wrong atype\n", INFO_LEVEL, 0);
       return -1;
     }

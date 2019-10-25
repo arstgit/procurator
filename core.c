@@ -5,8 +5,20 @@ unsigned char *iv = (unsigned char *)"0123456789012345";
 int globalElevel = INFO_LEVEL;
 
 void eprint(int fd, unsigned char *str, int elevel, int perrorflag) {
+  time_t now;
+
   if (elevel < globalElevel)
     return;
+
+  time(&now);
+  if (write(fd, ctime(&now), strlen(ctime(&now)) - 1) == -1) {
+    perror("write, eprint, time");
+    exit(EXIT_FAILURE);
+  }
+  if (write(fd, " ", 1) == -1) {
+    perror("write, eprint, space");
+    exit(EXIT_FAILURE);
+  }
 
   if (perrorflag == 1) {
     perror(str);
@@ -211,6 +223,8 @@ static int trySend(struct evinfo *einfo) {
       buf = buf + numSend;
     }
   }
+  if (len == 0)
+    einfo->bufEndIndex = 0;
   einfo->bufStartIndex = einfo->bufEndIndex - len;
   return 0;
 }
@@ -234,12 +248,23 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
 
   if (einfo->bufEndIndex > 0) {
     if (einfo->bufEndIndex + len > einfo->bufLen) {
-      einfo->buf = realloc(einfo->buf, BUF_FACTOR * (einfo->bufEndIndex + len));
+      einfo->buf =
+          realloc(einfo->buf, BUF_FACTOR2 * (einfo->bufEndIndex + len));
+      printf("step2 type: %d, realloc num: %zu, endindex: %zu, len: %zu\n",
+             einfo->type, BUF_FACTOR2 * (einfo->bufEndIndex + len),
+             einfo->bufEndIndex, len);
+
+      fflush(stdout);
       if (einfo->buf == NULL) {
-        perror("realloc");
+        perror("realloc step1");
+        eprint(STDERR_FILENO, "realloc step1\n", INFO_LEVEL, 0);
+        printf("step1 realloc num: %zu\n",
+               BUF_FACTOR2 * (einfo->bufEndIndex + len));
+        fflush(stdout);
+        return -1;
         exit(EXIT_FAILURE);
       }
-      einfo->bufLen = BUF_FACTOR * (einfo->bufEndIndex + len);
+      einfo->bufLen = BUF_FACTOR2 * (einfo->bufEndIndex + len);
     }
 
     memcpy(einfo->buf + einfo->bufEndIndex, buf, len);
@@ -253,14 +278,21 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
     numSend = send(fd, buf, len, flags);
     if (numSend == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        // to do
         if (einfo->bufEndIndex == 0) {
           if (len > einfo->bufLen) {
-            einfo->buf = realloc(einfo->buf, BUF_FACTOR * len);
+            einfo->buf = realloc(einfo->buf, BUF_FACTOR1 * len);
+
+            printf(
+                "step1 type: %d, realloc num: %zu, endindex: %zu, len: %zu\n",
+                einfo->type, BUF_FACTOR1 * len, einfo->bufEndIndex, len);
+            fflush(stdout);
             if (einfo->buf == NULL) {
-              perror("realloc");
+              eprint(STDERR_FILENO, "realloc step2\n", INFO_LEVEL, 0);
+              return -1;
               exit(EXIT_FAILURE);
             }
-            einfo->bufLen = BUF_FACTOR * len;
+            einfo->bufLen = BUF_FACTOR1 * len;
           }
 
           memcpy(einfo->buf, buf, len);
@@ -276,6 +308,8 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
       buf = buf + numSend;
     }
   }
+  if (len == 0)
+    einfo->bufEndIndex = 0;
   einfo->bufStartIndex = einfo->bufEndIndex - len;
 
   return 0;
@@ -404,16 +438,19 @@ static int handleIn(struct evinfo *einfo,
           perror("encrypt, 0");
           exit(EXIT_FAILURE);
         }
-        if (tmpLen > BUF_SIZE + 512) {
-          perror("tmpLen exceeded, handleIn");
+        if (tmpLen > TMP_BUF_SIZE) {
+          eprint(STDOUT_FILENO, "tmpLen exceeded, handleIn", INFO_LEVEL, 0);
           exit(EXIT_FAILURE);
         }
         bufp = tmpBuf;
         numRead = tmpLen;
       }
+      if (numRead == BUF_SIZE) {
+        eprint(STDOUT_FILENO, "numRead === BUF_SIZE\n", INFO_LEVEL, 0);
+      }
 
       if (handleInData(einfo, bufp, numRead) == -1) {
-        perror("handleIn: handleInData");
+        eprint(STDOUT_FILENO, "handleIn: handleInData\n", INFO_LEVEL, 0);
         return -1;
       }
     }
@@ -478,6 +515,34 @@ void eloop(char *port,
         continue;
       }
 
+      if (evlist[n].events & EPOLLOUT) {
+        if (etype == OUT) {
+          if (einfo->outconnected == 0) {
+            if (connOutConnected(einfo) == -1) {
+              clean(einfo);
+              continue;
+            } else {
+              einfo->outconnected = 1;
+            }
+          }
+
+          if (trySend(einfo) == -1) {
+            eprint(STDOUT_FILENO, "trySend: eloop\n", INFO_LEVEL, 0);
+            clean(einfo);
+            continue;
+          }
+        } else if (etype == IN) {
+          if (trySend(einfo) == -1) {
+            eprint(STDOUT_FILENO, "trySend: eloop\n", INFO_LEVEL, 0);
+            clean(einfo);
+            continue;
+          }
+        } else {
+          eprint(STDOUT_FILENO, "wrong etype in EPOLLOUT\n", INFO_LEVEL, 0);
+          exit(EXIT_FAILURE);
+        }
+      }
+
       if (evlist[n].events & EPOLLIN) {
         if (etype == LISTEN) {
           infd = accept(einfo->fd, NULL, NULL);
@@ -489,11 +554,6 @@ void eloop(char *port,
               exit(EXIT_FAILURE);
             }
           }
-          if (setnonblocking(infd) == -1) {
-            perror("setnonblocking");
-            exit(EXIT_FAILURE);
-          }
-
           eadd(IN, infd, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET);
         } else if (etype == IN) {
           if (handleIn(einfo, handleInData) == -1) {
@@ -507,34 +567,6 @@ void eloop(char *port,
           }
         } else {
           eprint(STDOUT_FILENO, "wrong etype in EPOLLIN\n", INFO_LEVEL, 0);
-          exit(EXIT_FAILURE);
-        }
-      }
-
-      if (evlist[n].events & EPOLLOUT) {
-        if (etype == OUT) {
-          if (einfo->outconnected == 0) {
-            if (connOutConnected(einfo) == -1) {
-              clean(einfo);
-              continue;
-            } else {
-              einfo->outconnected = 1;
-            }
-          }
-
-          if (trySend(einfo) == -1) {
-            perror("trySend: eloop");
-            clean(einfo);
-            continue;
-          }
-        } else if (etype == IN) {
-          if (trySend(einfo) == -1) {
-            perror("trySend: eloop");
-            clean(einfo);
-            continue;
-          }
-        } else {
-          eprint(STDOUT_FILENO, "wrong etype in EPOLLOUT\n", INFO_LEVEL, 0);
           exit(EXIT_FAILURE);
         }
       }

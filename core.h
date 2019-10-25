@@ -14,6 +14,7 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "crypto.h"
@@ -30,9 +31,11 @@
 #define LOCAL_PORT "8080"
 #endif
 
-#define BUF_SIZE 1048576
+#define BUF_SIZE (212992 * 16)
+#define TMP_BUF_SIZE BUF_SIZE
 #define MAX_EVENTS 20
-#define BUF_FACTOR 200
+#define BUF_FACTOR1 1
+#define BUF_FACTOR2 16
 
 enum evtype { LISTEN, IN, OUT };
 
@@ -52,7 +55,7 @@ struct evinfo {
 
 int efd;
 unsigned char buf[BUF_SIZE];
-unsigned char tmpBuf[BUF_SIZE + 1024];
+unsigned char tmpBuf[TMP_BUF_SIZE];
 int serverflag;
 
 enum elevel { LOWEST_LEVEL, INFO_LEVEL, ERR_LEVEL, HIGHEST_LEVEL };

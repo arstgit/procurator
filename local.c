@@ -6,14 +6,14 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
                         ssize_t numRead) {
   int outfd, infd = einfo->fd;
   int cmd, atyp;
-  struct epoll_event ev;
 
   if (einfo->stage == 0) {
-    if (sendOrStore(infd, "\x05\x00", 2, 0, einfo, 1) == -1) {
-      eprint(STDOUT_FILENO, "sendOrStore, stage0\n", INFO_LEVEL, 0);
+    if (connOut(einfo, REMOTE_HOST, REMOTE_PORT) == -1) {
       return -1;
     }
-    if (connOut(einfo, REMOTE_HOST, REMOTE_PORT) == -1) {
+
+    if (sendOrStore(infd, "\x05\x00", 2, 0, einfo, 1) == -1) {
+      eprint(STDOUT_FILENO, "sendOrStore, stage0\n", INFO_LEVEL, 0);
       return -1;
     }
 
