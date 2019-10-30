@@ -34,20 +34,10 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
       eprint(STDOUT_FILENO, "Not implemented ipv6, stage0\n", INFO_LEVEL, 0);
       return -1;
     } else {
-      printf("numRead: %d val: %02x", numRead, atyp & 0xff);
-      int i = 40;
-      unsigned char *pp = buf;
-      while (i-- > 0) {
-        printf("%02x", (unsigned int)*pp++);
-      }
-      printf("\n");
-
-      fflush(stdout);
-
       eprint(STDOUT_FILENO, "Wrong atype\n", INFO_LEVEL, 0);
+
       return -1;
     }
-
     if (connOut(einfo, outhost, outport) == -1) {
       return -1;
     }

@@ -31,11 +31,17 @@
 #define LOCAL_PORT "8080"
 #endif
 
+#define TCPKEEPALIVE 1;
+#define TCPKEEPIDLE 2;
+#define TCPKEEPINTVL 2;
+#define TCPKEEPCNT 3;
+
 #define BUF_SIZE (212992 * 16)
 #define TMP_BUF_SIZE BUF_SIZE
 #define MAX_EVENTS 20
 #define BUF_FACTOR1 1
 #define BUF_FACTOR2 16
+#define CONNECT_POOL_SIZE 8
 
 enum evtype { LISTEN, IN, OUT };
 
@@ -53,10 +59,16 @@ struct evinfo {
   struct evinfo *ptr;
 };
 
+struct connectPool {
+  int fds[CONNECT_POOL_SIZE];
+  int next;
+} connPool;
+
 int efd;
 unsigned char buf[BUF_SIZE];
 unsigned char tmpBuf[TMP_BUF_SIZE];
 int serverflag;
+int connectPool[CONNECT_POOL_SIZE];
 
 enum elevel { LOWEST_LEVEL, INFO_LEVEL, ERR_LEVEL, HIGHEST_LEVEL };
 

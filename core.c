@@ -365,34 +365,110 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   return einfo;
 }
 
-int connOut(struct evinfo *einfo, char *outhost, char *outport) {
-  int outfd;
-
-  outfd = inetConnect(outhost, outport, SOCK_STREAM);
-  if (outfd == -1) {
-    perror("inetConnect");
-    return -1;
-  }
-
-  einfo->ptr = eadd(OUT, outfd, -1, einfo, EPOLLOUT | EPOLLIN | EPOLLET);
-
-  return 0;
-}
-
-static int connOutConnected(struct evinfo *einfo) {
-  int flags, result;
-  struct epoll_event ev;
+static int checkConnected(int fd) {
+  int result;
 
   socklen_t result_len = sizeof(result);
-  if (getsockopt(einfo->fd, SOL_SOCKET, SO_ERROR, &result, &result_len) < 0) {
+  if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &result, &result_len) < 0) {
     // error, fail somehow, close socket
     perror("getsockopt");
     return -1;
   }
   if (result != 0) {
-    eprint(STDERR_FILENO, "connOutConnected, not connected ", INFO_LEVEL, 1);
+    eprint(STDERR_FILENO, "checkConnected reasult not 0.\n", INFO_LEVEL, 1);
     return -1;
   }
+
+  return 0;
+}
+
+static int connOutConnected(struct evinfo *einfo) {
+  return checkConnected(einfo->fd);
+}
+
+int setkeepalive(int fd) {
+  int optval;
+
+  optval = TCPKEEPALIVE;
+  if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &optval, sizeof(optval)) == -1) {
+    return -1;
+  }
+  optval = TCPKEEPIDLE;
+  if (setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &optval, sizeof(optval)) == -1) {
+    return -1;
+  }
+  optval = TCPKEEPINTVL;
+  if (setsockopt(fd, SOL_TCP, TCP_KEEPINTVL, &optval, sizeof(optval)) == -1) {
+    return -1;
+  }
+  optval = TCPKEEPCNT;
+  if (setsockopt(fd, SOL_TCP, TCP_KEEPCNT, &optval, sizeof(optval)) == -1) {
+    return -1;
+  }
+
+  return 0;
+}
+
+int connOut(struct evinfo *einfo, char *outhost, char *outport) {
+  int outfd, tmpfd;
+  ssize_t numRead;
+
+  if (serverflag == 0) {
+    outfd = connPool.fds[connPool.next];
+    numRead = recv(outfd, buf, BUF_SIZE, MSG_PEEK);
+    // if (numRead == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    if (checkConnected(outfd) == 0 && numRead == -1 &&
+        (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    } else {
+      if (numRead == -1) {
+        perror("recv, connOut");
+      }
+      if (numRead > 0) {
+        eprint(STDOUT_FILENO, "connOut, numRead > 0.", INFO_LEVEL, 0);
+      }
+
+      if (close(outfd) == -1) {
+        perror("close, connOut");
+        return -1;
+      }
+      outfd = inetConnect(outhost, outport, SOCK_STREAM);
+      if (outfd == -1) {
+        perror("inetConnect, connOut local1");
+        return -1;
+      }
+      if (setkeepalive(outfd) == -1) {
+        if (close(outfd) == -1) {
+          perror("close, connOut, setkeepalive");
+        }
+        return -1;
+      }
+    }
+
+    tmpfd = inetConnect(outhost, outport, SOCK_STREAM);
+    if (tmpfd == -1) {
+      perror("inetConnect, connOut local2");
+      return -1;
+    }
+    if (setkeepalive(tmpfd) == -1) {
+      if (close(tmpfd) == -1) {
+        perror("close, connOut, setkeepalive");
+      }
+      return -1;
+    }
+    connPool.fds[connPool.next] = tmpfd;
+    printf("fd: %d\n", connPool.next);
+    fflush(stdout);
+    if (connPool.next++ == CONNECT_POOL_SIZE - 1)
+      connPool.next = 0;
+  } else {
+    outfd = inetConnect(outhost, outport, SOCK_STREAM);
+    if (outfd == -1) {
+      perror("inetConnect, connOut server");
+      return -1;
+    }
+  }
+
+  einfo->ptr = eadd(OUT, outfd, -1, einfo, EPOLLOUT | EPOLLIN | EPOLLET);
 
   return 0;
 }
@@ -488,6 +564,26 @@ void eloop(char *port,
 
   eadd(LISTEN, listenfd, -1, NULL, EPOLLIN);
 
+  if (serverflag == 0) {
+    int i, fd;
+
+    connPool.next = 0;
+    for (i = 0; i < CONNECT_POOL_SIZE; i++) {
+      fd = inetConnect(REMOTE_HOST, REMOTE_PORT, SOCK_STREAM);
+      if (fd == -1) {
+        perror("inetConnect, eloop");
+        exit(EXIT_FAILURE);
+      }
+      if (setkeepalive(fd) == -1) {
+        if (close(fd) == -1) {
+          perror("close, eloop, setkeepalive");
+        }
+        exit(EXIT_FAILURE);
+      }
+      connPool.fds[i] = fd;
+    }
+  }
+
   eprint(STDOUT_FILENO, "started!\n\n", INFO_LEVEL, 0);
 
   for (;;) {
@@ -506,11 +602,17 @@ void eloop(char *port,
 
       if (evlist[n].events & EPOLLERR) {
         eprint(STDOUT_FILENO, "EPOLLERR\n", INFO_LEVEL, 0);
+        printf("type: %d, buf: %d, %d, %d\n", etype, einfo->bufStartIndex,
+               einfo->bufEndIndex, einfo->bufLen);
+        fflush(stdout);
         clean(einfo);
         continue;
       }
       if (evlist[n].events & EPOLLHUP) {
         eprint(STDOUT_FILENO, "EPOLLHUP\n", INFO_LEVEL, 0);
+        printf("type: %d, buf: %d, %d, %d\n", etype, einfo->bufStartIndex,
+               einfo->bufEndIndex, einfo->bufLen);
+        fflush(stdout);
         clean(einfo);
         continue;
       }
@@ -545,16 +647,19 @@ void eloop(char *port,
 
       if (evlist[n].events & EPOLLIN) {
         if (etype == LISTEN) {
-          infd = accept(einfo->fd, NULL, NULL);
-          if (infd == -1) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-              continue;
-            } else {
-              perror("accept");
-              exit(EXIT_FAILURE);
+          for (;;) {
+            infd = accept(einfo->fd, NULL, NULL);
+            if (infd == -1) {
+              if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;
+              } else {
+                perror("accept");
+                exit(EXIT_FAILURE);
+              }
             }
+            eadd(IN, infd, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET);
           }
-          eadd(IN, infd, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET);
+          continue;
         } else if (etype == IN) {
           if (handleIn(einfo, handleInData) == -1) {
             clean(einfo);
