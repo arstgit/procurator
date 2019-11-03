@@ -34,7 +34,7 @@
 #define TCPKEEPALIVE 1;
 #define TCPKEEPIDLE 2;
 #define TCPKEEPINTVL 2;
-#define TCPKEEPCNT 3;
+#define TCPKEEPCNT 5;
 
 #define BUF_SIZE (212992 * 16)
 #define TMP_BUF_SIZE BUF_SIZE
