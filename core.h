@@ -42,14 +42,17 @@
 #define BUF_FACTOR1 1
 #define BUF_FACTOR2 16
 #define CONNECT_POOL_SIZE 8
+#define MAX_IDLE_TIME 60
+// milliseconds
+#define EPOLL_TIMEOUT (3 * 1000)
 
 enum evtype { LISTEN, IN, OUT };
 
 struct evinfo {
   enum evtype type;
   int fd;
-  int stage;
-  int outconnected;
+  char stage;
+  char outconnected;
   void *encryptCtx;
   void *decryptCtx;
   int bufStartIndex;
@@ -57,7 +60,9 @@ struct evinfo {
   int bufLen;
   char *buf;
   struct evinfo *ptr;
-};
+  time_t last_active;
+  struct evinfo *prev, *next;
+} * dumbevhead, *listenevinfo;
 
 struct connectPool {
   int fds[CONNECT_POOL_SIZE];
@@ -72,7 +77,9 @@ int connectPool[CONNECT_POOL_SIZE];
 
 enum elevel { LOWEST_LEVEL, INFO_LEVEL, ERR_LEVEL, HIGHEST_LEVEL };
 
-void eprint(int, unsigned char *, int, int);
+void eprint(unsigned char *, int, ...);
+
+void eprintf(const char *, ...);
 
 void clean(struct evinfo *einfo);
 

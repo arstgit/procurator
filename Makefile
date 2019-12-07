@@ -3,7 +3,7 @@ CC=gcc
 DEPS = core.h
 BUILD = release
 CFLAGS_release = 
-CFLAGS_debug = -g
+CFLAGS_debug = -g -O0
 CFLAGS = ${CFLAGS_${BUILD}}
 
 REMOTE_HOST="\"127.0.0.1\"" 

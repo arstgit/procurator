@@ -4,13 +4,45 @@ unsigned char *key = (unsigned char *)"01234567890123456789012345678901";
 unsigned char *iv = (unsigned char *)"0123456789012345";
 int globalElevel = INFO_LEVEL;
 
-void eprint(int fd, unsigned char *str, int elevel, int perrorflag) {
+void eprint(unsigned char *str, int num, ...) {
+  va_list valist;
+  int fd;
+  int elevel;
+  int perrorflag;
   time_t now;
+
+  if (num > 3) {
+    exit(EXIT_FAILURE);
+  }
+
+  va_start(valist, num);
+
+  fd = STDOUT_FILENO;
+  elevel = INFO_LEVEL;
+  perrorflag = 0;
+  for (int i = 0; i < num; i++) {
+    switch (i) {
+    case 0:
+      fd = va_arg(valist, int);
+      break;
+    case 1:
+      elevel = va_arg(valist, int);
+      break;
+    case 2:
+      perrorflag = va_arg(valist, int);
+      break;
+    }
+  }
 
   if (elevel < globalElevel)
     return;
 
-  time(&now);
+  now = time(NULL);
+  if (now == -1) {
+    perror("time, eprint");
+    exit(EXIT_FAILURE);
+  }
+
   if (write(fd, ctime(&now), strlen(ctime(&now)) - 1) == -1) {
     perror("write, eprint, time");
     exit(EXIT_FAILURE);
@@ -37,6 +69,8 @@ void eprint(int fd, unsigned char *str, int elevel, int perrorflag) {
       exit(EXIT_FAILURE);
     }
   }
+
+  va_end(valist);
   return;
 }
 
@@ -53,6 +87,38 @@ static int setnonblocking(int fd) {
     perror("fcntl: setnonblocking, F_SETFL");
     return -1;
   }
+}
+
+void eprintf(const char *fmt, ...) {
+  int size = 0;
+  char *p = NULL;
+  va_list ap;
+
+  va_start(ap, fmt);
+  size = vsnprintf(p, size, fmt, ap);
+  va_end(ap);
+
+  if (size < 0)
+    return;
+
+  size++; /* For '\0' */
+  p = malloc(size);
+  if (p == NULL)
+    return;
+
+  va_start(ap, fmt);
+  size = vsnprintf(p, size, fmt, ap);
+  va_end(ap);
+
+  if (size < 0) {
+    free(p);
+    return;
+  }
+
+  eprint(p, 0);
+
+  free(p);
+  return;
 }
 
 int inetConnect(const char *host, const char *service, int type) {
@@ -192,6 +258,12 @@ void cleanOne(struct evinfo *einfo) {
   }
   freeCipher(einfo->encryptCtx);
   freeCipher(einfo->decryptCtx);
+
+  if (einfo->type == IN) {
+    einfo->prev->next = einfo->next;
+    einfo->next->prev = einfo->prev;
+  }
+
   free(einfo);
 }
 
@@ -250,18 +322,8 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
     if (einfo->bufEndIndex + len > einfo->bufLen) {
       einfo->buf =
           realloc(einfo->buf, BUF_FACTOR2 * (einfo->bufEndIndex + len));
-      printf("step2 type: %d, realloc num: %zu, endindex: %zu, len: %zu\n",
-             einfo->type, BUF_FACTOR2 * (einfo->bufEndIndex + len),
-             einfo->bufEndIndex, len);
-
-      fflush(stdout);
       if (einfo->buf == NULL) {
-        perror("realloc step1");
-        eprint(STDERR_FILENO, "realloc step1\n", INFO_LEVEL, 0);
-        printf("step1 realloc num: %zu\n",
-               BUF_FACTOR2 * (einfo->bufEndIndex + len));
-        fflush(stdout);
-        return -1;
+        eprintf("realloc step1\n");
         exit(EXIT_FAILURE);
       }
       einfo->bufLen = BUF_FACTOR2 * (einfo->bufEndIndex + len);
@@ -283,13 +345,8 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
           if (len > einfo->bufLen) {
             einfo->buf = realloc(einfo->buf, BUF_FACTOR1 * len);
 
-            printf(
-                "step1 type: %d, realloc num: %zu, endindex: %zu, len: %zu\n",
-                einfo->type, BUF_FACTOR1 * len, einfo->bufEndIndex, len);
-            fflush(stdout);
             if (einfo->buf == NULL) {
-              eprint(STDERR_FILENO, "realloc step2\n", INFO_LEVEL, 0);
-              return -1;
+              eprintf("realloc step2\n");
               exit(EXIT_FAILURE);
             }
             einfo->bufLen = BUF_FACTOR1 * len;
@@ -319,6 +376,13 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
                     uint32_t events) {
   struct evinfo *einfo;
   struct epoll_event ev;
+  time_t now;
+
+  now = time(NULL);
+  if (now == -1) {
+    perror("time, evinfo");
+    exit(EXIT_FAILURE);
+  }
 
   if (events & EPOLLET) {
     if (setnonblocking(fd) == -1) {
@@ -343,6 +407,17 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   einfo->bufLen = 0;
   einfo->buf = NULL;
   einfo->ptr = ptr;
+  einfo->last_active = now;
+
+  if (einfo->type == IN) {
+    dumbevhead->prev->next = einfo;
+    einfo->prev = dumbevhead->prev;
+    dumbevhead->prev = einfo;
+    einfo->next = dumbevhead;
+  } else {
+    einfo->prev = NULL;
+    einfo->next = NULL;
+  }
 
   if ((serverflag == 1 && einfo->type == IN) ||
       (serverflag == 0 && einfo->type == OUT)) {
@@ -375,7 +450,7 @@ static int checkConnected(int fd) {
     return -1;
   }
   if (result != 0) {
-    eprint(STDERR_FILENO, "checkConnected reasult not 0.\n", INFO_LEVEL, 1);
+    // eprint(STDERR_FILENO, "checkConnected reasult not 0.\n", INFO_LEVEL, 1);
     return -1;
   }
 
@@ -424,7 +499,7 @@ int connOut(struct evinfo *einfo, char *outhost, char *outport) {
         perror("recv, connOut");
       }
       if (numRead > 0) {
-        eprint(STDOUT_FILENO, "connOut, numRead > 0.", INFO_LEVEL, 0);
+        eprintf("recv, connOut, numRead > 0.");
       }
 
       if (close(outfd) == -1) {
@@ -456,8 +531,6 @@ int connOut(struct evinfo *einfo, char *outhost, char *outport) {
       return -1;
     }
     connPool.fds[connPool.next] = tmpfd;
-    printf("fd: %d\n", connPool.next);
-    fflush(stdout);
     if (connPool.next++ == CONNECT_POOL_SIZE - 1)
       connPool.next = 0;
   } else {
@@ -515,18 +588,18 @@ static int handleIn(struct evinfo *einfo,
           exit(EXIT_FAILURE);
         }
         if (tmpLen > TMP_BUF_SIZE) {
-          eprint(STDOUT_FILENO, "tmpLen exceeded, handleIn", INFO_LEVEL, 0);
+          eprintf("recv, handleIn, tmpLen > TMP_BUF_SIZE");
           exit(EXIT_FAILURE);
         }
         bufp = tmpBuf;
         numRead = tmpLen;
       }
       if (numRead == BUF_SIZE) {
-        eprint(STDOUT_FILENO, "numRead === BUF_SIZE\n", INFO_LEVEL, 0);
+        eprintf("numRead === BUF_SIZE\n");
       }
 
       if (handleInData(einfo, bufp, numRead) == -1) {
-        eprint(STDOUT_FILENO, "handleIn: handleInData\n", INFO_LEVEL, 0);
+        eprintf("handleIn: handleInData\n");
         return -1;
       }
     }
@@ -534,22 +607,70 @@ static int handleIn(struct evinfo *einfo,
   return 0;
 }
 
+void onquit(int signum) {
+  struct evinfo *tmpeinfo, *nexteinfo;
+
+  tmpeinfo = dumbevhead->next;
+  for (;;) {
+    if (tmpeinfo == dumbevhead)
+      break;
+
+    nexteinfo = tmpeinfo->next;
+    clean(tmpeinfo);
+    tmpeinfo = nexteinfo;
+  }
+}
+
+void onexit(int signum) {
+  struct evinfo *tmpeinfo, *nexteinfo;
+
+  tmpeinfo = dumbevhead->next;
+  for (;;) {
+    if (tmpeinfo == dumbevhead)
+      break;
+
+    nexteinfo = tmpeinfo->next;
+    clean(tmpeinfo);
+    tmpeinfo = nexteinfo;
+  }
+
+  free(listenevinfo);
+  free(dumbevhead);
+
+  exit(EXIT_SUCCESS);
+}
+
 void eloop(char *port,
            int (*handleInData)(struct evinfo *, unsigned char *, ssize_t)) {
+  dumbevhead = malloc(sizeof(struct evinfo));
+  dumbevhead->prev = dumbevhead->next = dumbevhead;
+
   struct sigaction sa;
   ssize_t numRead;
   int nfds, listenfd, infd;
-  struct evinfo *einfo;
+  struct evinfo *einfo, *tmpeinfo, *nexteinfo;
   enum evtype etype;
   struct epoll_event ev, evlist[MAX_EVENTS];
+  time_t now;
 
-  sa.sa_handler = SIG_IGN;
+  memset(&sa, 0, sizeof(sa));
   sa.sa_flags = 0;
-  sigaction(SIGPIPE, &sa, 0);
+  sa.sa_handler = SIG_IGN;
   if (sigaction(SIGPIPE, &sa, NULL) == -1) {
     perror("failed to ignore SIGPIPE; sigaction");
     exit(EXIT_FAILURE);
   }
+  sa.sa_handler = onexit;
+  if (sigaction(SIGINT, &sa, NULL) == -1) {
+    perror("failed to ignore SIGINT; sigaction");
+    exit(EXIT_FAILURE);
+  }
+  sa.sa_handler = onquit;
+  if (sigaction(SIGQUIT, &sa, NULL) == -1) {
+    perror("failed to ignore SIGQUIT; sigaction");
+    exit(EXIT_FAILURE);
+  }
+
   listenfd = inetListen(port, 80, NULL);
   if (listenfd == -1) {
     perror("inetListen");
@@ -562,7 +683,7 @@ void eloop(char *port,
     exit(EXIT_FAILURE);
   }
 
-  eadd(LISTEN, listenfd, -1, NULL, EPOLLIN);
+  listenevinfo = eadd(LISTEN, listenfd, -1, NULL, EPOLLIN);
 
   if (serverflag == 0) {
     int i, fd;
@@ -584,10 +705,10 @@ void eloop(char *port,
     }
   }
 
-  eprint(STDOUT_FILENO, "started!\n\n", INFO_LEVEL, 0);
+  eprintf("started!\n\n");
 
   for (;;) {
-    nfds = epoll_wait(efd, evlist, 1, -1);
+    nfds = epoll_wait(efd, evlist, 1, EPOLL_TIMEOUT);
     // nfds = epoll_wait(efd, evlist, MAX_EVENTS, -1);
     if (nfds == -1) {
       perror("epoll_wait");
@@ -596,12 +717,45 @@ void eloop(char *port,
       exit(EXIT_FAILURE);
     }
 
+    if (nfds == 0) {
+      now = time(NULL);
+      if (now == -1) {
+        perror("time, eloop");
+        exit(EXIT_FAILURE);
+      }
+
+      tmpeinfo = dumbevhead->next;
+      int activecnt = 0;
+      for (;;) {
+        if (tmpeinfo == dumbevhead)
+          break;
+
+        if ((now - tmpeinfo->last_active) < MAX_IDLE_TIME) {
+          activecnt++;
+          printf("now: %ld, tmpeinfo->last_active: %ld, (now - "
+                 "tmpeinfo->last_active): %ld, max: %ld\n",
+                 now, tmpeinfo->last_active, (now - tmpeinfo->last_active),
+                 MAX_IDLE_TIME);
+
+          tmpeinfo = tmpeinfo->next;
+          continue;
+        } else {
+          eprintf("Timeout clean 1.\n");
+          nexteinfo = tmpeinfo->next;
+          clean(tmpeinfo);
+          tmpeinfo = nexteinfo;
+          continue;
+        }
+      }
+      eprintf("activecnt: %d\n", activecnt);
+    }
+
     for (int n = 0; n < nfds; ++n) {
       einfo = (struct evinfo *)evlist[n].data.ptr;
       etype = einfo->type;
 
       if (evlist[n].events & EPOLLERR) {
-        eprint(STDOUT_FILENO, "EPOLLERR\n", INFO_LEVEL, 0);
+        eprintf("EPOLLERR\n");
         printf("type: %d, buf: %d, %d, %d\n", etype, einfo->bufStartIndex,
                einfo->bufEndIndex, einfo->bufLen);
         fflush(stdout);
@@ -609,7 +763,7 @@ void eloop(char *port,
         continue;
       }
       if (evlist[n].events & EPOLLHUP) {
-        eprint(STDOUT_FILENO, "EPOLLHUP\n", INFO_LEVEL, 0);
+        eprintf("EPOLLHUP\n");
         printf("type: %d, buf: %d, %d, %d\n", etype, einfo->bufStartIndex,
                einfo->bufEndIndex, einfo->bufLen);
         fflush(stdout);
@@ -629,18 +783,18 @@ void eloop(char *port,
           }
 
           if (trySend(einfo) == -1) {
-            eprint(STDOUT_FILENO, "trySend: eloop\n", INFO_LEVEL, 0);
+            eprintf("trySend: eloop\n");
             clean(einfo);
             continue;
           }
         } else if (etype == IN) {
           if (trySend(einfo) == -1) {
-            eprint(STDOUT_FILENO, "trySend: eloop\n", INFO_LEVEL, 0);
+            eprintf("trySend: eloop\n");
             clean(einfo);
             continue;
           }
         } else {
-          eprint(STDOUT_FILENO, "wrong etype in EPOLLOUT\n", INFO_LEVEL, 0);
+          eprintf("wrong etype in EPOLLOUT\n");
           exit(EXIT_FAILURE);
         }
       }
@@ -671,7 +825,7 @@ void eloop(char *port,
             continue;
           }
         } else {
-          eprint(STDOUT_FILENO, "wrong etype in EPOLLIN\n", INFO_LEVEL, 0);
+          eprintf("wrong etype in EPOLLIN\n");
           exit(EXIT_FAILURE);
         }
       }
