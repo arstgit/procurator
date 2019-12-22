@@ -42,9 +42,10 @@
 #define BUF_FACTOR1 1
 #define BUF_FACTOR2 16
 #define CONNECT_POOL_SIZE 8
-#define MAX_IDLE_TIME 60
+// seconds
+#define MAX_IDLE_TIME 60 * 60
 // milliseconds
-#define EPOLL_TIMEOUT (3 * 1000)
+#define EPOLL_TIMEOUT (30 * 1000)
 
 enum evtype { LISTEN, IN, OUT };
 
