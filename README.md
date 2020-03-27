@@ -6,6 +6,10 @@
 
 Socks5 proxy client and server.
 
+## Design
+
+[www.tiaoxingyubolang.com](https://www.tiaoxingyubolang.com/article/2020-03-22_procurator1)
+
 ## Compile & Install
 
 Don't forget to make your own `host` and `port` substitution.
