@@ -1,6 +1,6 @@
 # procurator
 
-[![Build Status](https://travis-ci.org/derekchuank/procurator.svg?branch=master)](https://travis-ci.org/derekchuank/procurator)
+[![Test Status](https://github.com/derekchuank/procurator/workflows/Test/badge.svg)](https://github.com/derekchuank/procurator/actions)
 
 ## Super simple to use
 
