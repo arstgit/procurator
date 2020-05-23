@@ -6,6 +6,7 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
                         ssize_t numRead) {
   int outfd, infd = einfo->fd;
   int cmd, atyp;
+  int addrlen;
 
   if (einfo->stage == 0) {
     if (connOut(einfo, REMOTE_HOST, REMOTE_PORT) == -1) {
@@ -34,11 +35,12 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
       // CONNECT
       if (atyp == '\x01') {
         // IP V4 address
-        eprintf("wrong atyp \x01, stage1\n");
-        return -1;
+        addrlen = 7;
+        memcpy(reqAddr, buf + 3, addrlen);
       } else if (atyp == '\x03') {
         // DOMAINNAME
-        memcpy(reqAddr, buf + 3, 4 + buf[4]);
+        addrlen = 4 + buf[4];
+        memcpy(reqAddr, buf + 3, addrlen);
       } else if (atyp == '\x04') {
         // IP V6 address
         eprintf("wrong atyp \x04, stage1\n");
@@ -49,7 +51,7 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
       }
 
       outfd = einfo->ptr->fd;
-      if (sendOrStore(outfd, reqAddr, 4 + buf[4], 0, einfo, 0) == -1) {
+      if (sendOrStore(outfd, reqAddr, addrlen, 0, einfo, 0) == -1) {
         eprintf("sendOrStore, stage1, write to outfd\n");
         return -1;
       }

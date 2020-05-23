@@ -6,6 +6,7 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
                         ssize_t numRead) {
   int outfd, infd = einfo->fd;
   int atyp, headerlen, consume;
+  char *ipv4;
 
   if (einfo->stage == 0) {
 
@@ -20,8 +21,12 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
     atyp = buf[0];
     if (atyp == '\x01') {
       // IP V4 address
-      eprintf("Not implemented ipv4, stage0\n");
-      return -1;
+      ipv4 = inet_ntoa(*(struct in_addr *)(buf + 1));
+
+      memcpy(outhost, ipv4, strlen(ipv4) + 1);
+      snprintf(outport, 6, "%hu", ntohs(*(uint16_t *)(buf + 5)));
+      headerlen = 8;
+      consume = headerlen;
     } else if (atyp == '\x03') {
       // DOMAINNAME
       memcpy(outhost, buf + 2, buf[1]);
