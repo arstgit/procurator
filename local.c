@@ -1,6 +1,8 @@
 #include "core.h"
 
-char reqAddr[259];
+extern int serverflag;
+
+static char reqAddr[259];
 
 static int handleInData(struct evinfo *einfo, unsigned char *buf,
                         ssize_t numRead) {

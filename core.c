@@ -4,6 +4,15 @@ unsigned char *key = (unsigned char *)"01234567890123456789012345678901";
 unsigned char *iv = (unsigned char *)"0123456789012345";
 int globalElevel = INFO_LEVEL;
 
+struct evinfo * dumbevhead, *listenevinfo;
+struct connectPool connPool;
+
+int efd;
+unsigned char buf[BUF_SIZE];
+unsigned char tmpBuf[TMP_BUF_SIZE];
+int serverflag;
+int connectPool[CONNECT_POOL_SIZE];
+
 void eprint(unsigned char *str, int num, ...) {
   va_list valist;
   int fd;

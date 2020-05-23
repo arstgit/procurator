@@ -63,18 +63,12 @@ struct evinfo {
   struct evinfo *ptr;
   time_t last_active;
   struct evinfo *prev, *next;
-} * dumbevhead, *listenevinfo;
+};
 
 struct connectPool {
   int fds[CONNECT_POOL_SIZE];
   int next;
-} connPool;
-
-int efd;
-unsigned char buf[BUF_SIZE];
-unsigned char tmpBuf[TMP_BUF_SIZE];
-int serverflag;
-int connectPool[CONNECT_POOL_SIZE];
+};
 
 enum elevel { LOWEST_LEVEL, INFO_LEVEL, ERR_LEVEL, HIGHEST_LEVEL };
 

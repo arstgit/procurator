@@ -1,5 +1,7 @@
 #include "core.h"
 
+extern int serverflag;
+
 static char outhost[256], outport[6];
 
 static int handleInData(struct evinfo *einfo, unsigned char *buf,
