@@ -6,42 +6,38 @@ CFLAGS_release =
 CFLAGS_debug = -g -O0
 CFLAGS = ${CFLAGS_${BUILD}}
 
-REMOTE_HOST="\"127.0.0.1\"" 
-REMOTE_PORT="\"8838\"" 
-LOCAL_PORT="\"8080\""
-
 # EXAMPLE: 
-#   $ make clean && make REMOTE_HOST='"\"127.0.0.1\""' REMOTE_PORT='"\"8838\""' LOCAL_PORT='"\"8080\""' BUILD=debug
+#   $ make clean && make BUILD=debug
 
-all: local server
+all: procurator-local procurator-server
 
 %.o: %.c $(DEPS)
-	$(CC) $(CFLAGS) -c -o $@ $< -DREMOTE_HOST=$(REMOTE_HOST) -DREMOTE_PORT=$(REMOTE_PORT) -DLOCAL_PORT=$(LOCAL_PORT)
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 curltest.o: curltest.c
 	$(CC) -c -o $@ $<
 
-local: local.o core.o crypto.o
+procurator-local: local.o core.o crypto.o
 	$(CC) -o $@ $^ -lcrypto
 
-server: server.o core.o crypto.o
+procurator-server: server.o core.o crypto.o
 	$(CC) -o $@ $^ -lcrypto
 
 curltest: curltest.o
 	$(CC) -o $@ $^
 
-test: curltest local server
+test: curltest procurator-local procurator-server
 	./curltest
 
 pretty:
 	clang-format -i *.c *.h
 
 install:
-	cp local /usr/local/bin/procurator-local
-	cp server /usr/local/bin/procurator-server
+	cp procurator-local /usr/local/bin/procurator-local
+	cp procurator-server /usr/local/bin/procurator-server
 
 clean:
-	rm -f *.o local server curltest
+	rm -f *.o procurator-local procurator-server curltest
 
 .PHONY: clean test pretty install
 

@@ -1,6 +1,6 @@
 *.swp
 *.o
 
-local
-server
+procurator-local
+procurator-server
 curltest

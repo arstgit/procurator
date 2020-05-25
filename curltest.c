@@ -39,7 +39,9 @@ int main(int argc, char *argv[]) {
       exit(EXIT_FAILURE);
     }
     close(fds[1]);
-    execlp("./local", (char *)NULL);
+    execlp("./procurator-local", "procurator-local", "--remote-host",
+           "127.0.0.1", "--remote-port", "8838", "--local-port", "8080",
+           (char *)NULL);
   }
 
   spid = fork();
@@ -58,7 +60,8 @@ int main(int argc, char *argv[]) {
     }
     close(fds[1]);
 
-    execlp("./server", (char *)NULL);
+    execlp("./procurator-server", "procurator-server", "--remote-port", "8838",
+           (char *)NULL);
   }
 
   for (;;) {

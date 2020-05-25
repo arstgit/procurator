@@ -14,7 +14,7 @@ Socks5 proxy client and server.
 
 Don't forget to make your own `host` and `port` substitution.
 ```
-  $ make REMOTE_HOST='"\"127.0.0.1\""' REMOTE_PORT='"\"8838\""' LOCAL_PORT='"\"8080\""'
+  $ make
   $ make install
 ```
 
@@ -22,12 +22,12 @@ Don't forget to make your own `host` and `port` substitution.
 
 In local machine, run command:
 ```
-  $ procurator-local
+  $ procurator-local --remote-host 127.0.0.1 --remote-port 8080 --local-port 1080
 ```
 
 In remote machine, run command:
 ```
-  $ procurator-server
+  $ procurator-server --remote-port 8080
 ```
 
 ## Test

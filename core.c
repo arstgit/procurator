@@ -4,7 +4,12 @@ unsigned char *key = (unsigned char *)"01234567890123456789012345678901";
 unsigned char *iv = (unsigned char *)"0123456789012345";
 int globalElevel = INFO_LEVEL;
 
-struct evinfo * dumbevhead, *listenevinfo;
+// User input config.
+char *remoteHost;
+char *remotePort;
+char *localPort;
+
+struct evinfo *dumbevhead, *listenevinfo;
 struct connectPool connPool;
 
 int efd;
@@ -700,7 +705,7 @@ void eloop(char *port,
 
     connPool.next = 0;
     for (i = 0; i < CONNECT_POOL_SIZE; i++) {
-      fd = inetConnect(REMOTE_HOST, REMOTE_PORT, SOCK_STREAM);
+      fd = inetConnect(remoteHost, remotePort, SOCK_STREAM);
       if (fd == -1) {
         perror("inetConnect, eloop");
         exit(EXIT_FAILURE);

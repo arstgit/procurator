@@ -19,18 +19,6 @@
 
 #include "crypto.h"
 
-#ifndef REMOTE_HOST
-#define REMOTE_HOST "127.0.0.1"
-#endif
-
-#ifndef REMOTE_PORT
-#define REMOTE_PORT "8838"
-#endif
-
-#ifndef LOCAL_PORT
-#define LOCAL_PORT "8080"
-#endif
-
 #define TCPKEEPALIVE 1;
 #define TCPKEEPIDLE 2;
 #define TCPKEEPINTVL 2;
@@ -46,6 +34,10 @@
 #define MAX_IDLE_TIME 60 * 60
 // milliseconds
 #define EPOLL_TIMEOUT (30 * 1000)
+
+extern char *remoteHost;
+extern char *remotePort;
+extern char *localPort;
 
 enum evtype { LISTEN, IN, OUT };
 

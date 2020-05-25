@@ -72,7 +72,31 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
   return 0;
 }
 
+static void usage(void) {
+  fprintf(stderr, "Usage: procurator-server [options]\n");
+  fprintf(stderr, "       procurator-server --help\n");
+  fprintf(stderr, "Examples:\n");
+  fprintf(stderr, "       procurator-server --remote-port 8080\n");
+  exit(1);
+}
+
 int main(int argc, char **argv) {
   serverflag = 1;
-  eloop(REMOTE_PORT, handleInData);
+
+  // Read config from argv.
+  for (int i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "--help")) {
+      usage();
+    }
+
+    if (!strcmp(argv[i], "--remote-port")) {
+      remotePort = argv[++i];
+      continue;
+    }
+  }
+
+  if (remotePort == NULL)
+    usage();
+
+  eloop(remotePort, handleInData);
 }
