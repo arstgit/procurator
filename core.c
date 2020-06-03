@@ -1,13 +1,15 @@
 #include "core.h"
 
-unsigned char *key = (unsigned char *)"01234567890123456789012345678901";
-unsigned char *iv = (unsigned char *)"0123456789012345";
+unsigned char key[32];
+unsigned char iv[16];
+
 int globalElevel = INFO_LEVEL;
 
 // User input config.
 char *remoteHost;
 char *remotePort;
 char *localPort;
+char *password;
 
 struct evinfo *dumbevhead, *listenevinfo;
 struct connectPool connPool;
@@ -133,6 +135,23 @@ void eprintf(const char *fmt, ...) {
 
   free(p);
   return;
+}
+
+static int populateKeyIv() {
+  unsigned char feed[128];
+
+  memcpy(feed, password, strlen(password));
+  MD5(feed, strlen(password), key);
+
+  memcpy(feed, key, 16);
+  memcpy(feed + 16, password, strlen(password));
+  MD5(feed, strlen(password) + 16, key + 16);
+
+  memcpy(feed, key + 16, 16);
+  memcpy(feed + 16, password, strlen(password));
+  MD5(feed, strlen(password) + 16, iv);
+
+  return 0;
 }
 
 int inetConnect(const char *host, const char *service, int type) {
@@ -270,8 +289,7 @@ void cleanOne(struct evinfo *einfo) {
   if (einfo->bufLen > 0) {
     free(einfo->buf);
   }
-  freeCipher(einfo->encryptCtx);
-  freeCipher(einfo->decryptCtx);
+  freeCipher(&einfo->encryptor);
 
   if (einfo->type == IN) {
     einfo->prev->next = einfo->next;
@@ -324,7 +342,8 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
   if ((serverflag == 1 && einfo->type == IN) ||
       (serverflag == 0 && einfo->type == OUT)) {
     int tmpLen;
-    if (encrypt(einfo->encryptCtx, tmpBuf, &tmpLen, buf, len, 1) == -1) {
+
+    if (encrypt(&einfo->encryptor, tmpBuf, &tmpLen, buf, len, key, iv) == -1) {
       perror("encrypt, 1");
       return -1;
     }
@@ -414,14 +433,17 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   einfo->fd = fd;
   einfo->stage = stage;
   einfo->outconnected = 0;
-  einfo->encryptCtx = NULL;
-  einfo->decryptCtx = NULL;
   einfo->bufStartIndex = 0;
   einfo->bufEndIndex = 0;
   einfo->bufLen = 0;
   einfo->buf = NULL;
   einfo->ptr = ptr;
   einfo->last_active = now;
+
+  einfo->encryptor.encryptCtx = NULL;
+  einfo->encryptor.decryptCtx = NULL;
+  einfo->encryptor.sentIv = 0;
+  einfo->encryptor.receivedIv = 0;
 
   if (einfo->type == IN) {
     dumbevhead->prev->next = einfo;
@@ -431,18 +453,6 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   } else {
     einfo->prev = NULL;
     einfo->next = NULL;
-  }
-
-  if ((serverflag == 1 && einfo->type == IN) ||
-      (serverflag == 0 && einfo->type == OUT)) {
-    if (initCipher((void **)&einfo->encryptCtx, key, iv, 1) == -1) {
-      perror("initCipher, encrypt");
-      exit(EXIT_FAILURE);
-    }
-    if (initCipher((void **)&einfo->decryptCtx, key, iv, 0) == -1) {
-      perror("initCipher, decrypt");
-      exit(EXIT_FAILURE);
-    }
   }
 
   ev.data.ptr = einfo;
@@ -596,8 +606,8 @@ static int handleIn(struct evinfo *einfo,
       if ((serverflag == 1 && einfo->type == IN) ||
           (serverflag == 0 && einfo->type == OUT)) {
         int tmpLen;
-        if (encrypt(einfo->decryptCtx, tmpBuf, &tmpLen, buf, numRead, 0) ==
-            -1) {
+        if (decrypt(&einfo->encryptor, tmpBuf, &tmpLen, buf, numRead, key,
+                    iv) == -1) {
           perror("encrypt, 0");
           exit(EXIT_FAILURE);
         }
@@ -685,6 +695,8 @@ void eloop(char *port,
     perror("failed to ignore SIGQUIT; sigaction");
     exit(EXIT_FAILURE);
   }
+
+  populateKeyIv();
 
   listenfd = inetListen(port, 80, NULL);
   if (listenfd == -1) {

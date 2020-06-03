@@ -4,12 +4,22 @@
 #include <openssl/conf.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/md5.h>
 #include <string.h>
 
-int initCipher(void **, unsigned char *, unsigned char *, int);
+struct encryptor {
+  void *encryptCtx;
+  void *decryptCtx;
+  int sentIv;
+  int receivedIv;
+};
 
-int freeCipher(void *);
+int freeCipher(struct encryptor *);
 
-int encrypt(void *, unsigned char *, int *, unsigned char *, int, int);
+int encrypt(struct encryptor *, unsigned char *, int *, unsigned char *, int,
+            unsigned char *, unsigned char *);
+
+int decrypt(struct encryptor *, unsigned char *, int *, unsigned char *, int,
+            unsigned char *, unsigned char *);
 
 #endif

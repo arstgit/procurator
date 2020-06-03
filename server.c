@@ -76,7 +76,8 @@ static void usage(void) {
   fprintf(stderr, "Usage: procurator-server [options]\n");
   fprintf(stderr, "       procurator-server --help\n");
   fprintf(stderr, "Examples:\n");
-  fprintf(stderr, "       procurator-server --remote-port 8080\n");
+  fprintf(stderr,
+          "       procurator-server --remote-port 8080 --password foobar\n");
   exit(1);
 }
 
@@ -93,9 +94,14 @@ int main(int argc, char **argv) {
       remotePort = argv[++i];
       continue;
     }
+
+    if (!strcmp(argv[i], "--password")) {
+      password = argv[++i];
+      continue;
+    }
   }
 
-  if (remotePort == NULL)
+  if (remotePort == NULL || password == NULL)
     usage();
 
   eloop(remotePort, handleInData);

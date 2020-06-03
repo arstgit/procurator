@@ -93,7 +93,7 @@ static void usage(void) {
   fprintf(stderr, "       procurator-local --help\n");
   fprintf(stderr, "Examples:\n");
   fprintf(stderr, "       procurator-local --remote-host 127.0.0.1 "
-                  "--remote-port 8080 --local-port 1080\n");
+                  "--remote-port 8080 --local-port 1080 --password foobar\n");
   exit(1);
 }
 
@@ -118,9 +118,15 @@ int main(int argc, char **argv) {
       localPort = argv[++i];
       continue;
     }
+
+    if (!strcmp(argv[i], "--password")) {
+      password = argv[++i];
+      continue;
+    }
   }
 
-  if (remoteHost == NULL || remotePort == NULL || localPort == NULL)
+  if (remoteHost == NULL || remotePort == NULL || localPort == NULL ||
+      password == NULL)
     usage();
 
   eloop(localPort, handleInData);

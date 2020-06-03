@@ -38,6 +38,7 @@
 extern char *remoteHost;
 extern char *remotePort;
 extern char *localPort;
+extern char *password;
 
 enum evtype { LISTEN, IN, OUT };
 
@@ -46,8 +47,7 @@ struct evinfo {
   int fd;
   char stage;
   char outconnected;
-  void *encryptCtx;
-  void *decryptCtx;
+  struct encryptor encryptor;
   int bufStartIndex;
   int bufEndIndex;
   int bufLen;
