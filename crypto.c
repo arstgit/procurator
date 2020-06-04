@@ -14,7 +14,7 @@ static int initCipher(void **ctx, unsigned char *key, unsigned char *iv,
     return -1;
 
   if (1 != (encryptFlag == 1 ? EVP_EncryptInit_ex : EVP_DecryptInit_ex)(
-               (EVP_CIPHER_CTX *)*ctx, EVP_aes_256_cfb8(), NULL, key, iv))
+               (EVP_CIPHER_CTX *)*ctx, EVP_aes_256_cfb128(), NULL, key, iv))
     return -1;
 
   return 0;
