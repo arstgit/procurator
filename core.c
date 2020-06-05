@@ -352,12 +352,13 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
   }
 
   if (einfo->bufEndIndex > 0) {
+    // Expand buf size.
     if (einfo->bufEndIndex + len > einfo->bufLen) {
       einfo->buf =
           realloc(einfo->buf, BUF_FACTOR2 * (einfo->bufEndIndex + len));
       if (einfo->buf == NULL) {
         eprintf("realloc step1\n");
-        exit(EXIT_FAILURE);
+        return -1;
       }
       einfo->bufLen = BUF_FACTOR2 * (einfo->bufEndIndex + len);
     }
@@ -380,7 +381,7 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
 
             if (einfo->buf == NULL) {
               eprintf("realloc step2\n");
-              exit(EXIT_FAILURE);
+              return -1;
             }
             einfo->bufLen = BUF_FACTOR1 * len;
           }
@@ -608,8 +609,8 @@ static int handleIn(struct evinfo *einfo,
         int tmpLen;
         if (decrypt(&einfo->encryptor, tmpBuf, &tmpLen, buf, numRead, key,
                     iv) == -1) {
-          perror("encrypt, 0");
-          exit(EXIT_FAILURE);
+          eprintf("encrypt, handleIn");
+          return -1;
         }
         if (tmpLen > TMP_BUF_SIZE) {
           eprintf("recv, handleIn, tmpLen > TMP_BUF_SIZE");
