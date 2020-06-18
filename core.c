@@ -784,7 +784,7 @@ void eloop(char *port,
 
       if (evlist[n].events & EPOLLERR) {
         eprintf("EPOLLERR\n");
-        printf("type: %d, buf: %d, %d, %d\n", etype, einfo->bufStartIndex,
+        printf("EPOLLERR type: %d, buf: %d, %d, %d\n", etype, einfo->bufStartIndex,
                einfo->bufEndIndex, einfo->bufLen);
         fflush(stdout);
         clean(einfo);
@@ -792,7 +792,7 @@ void eloop(char *port,
       }
       if (evlist[n].events & EPOLLHUP) {
         eprintf("EPOLLHUP\n");
-        printf("type: %d, buf: %d, %d, %d\n", etype, einfo->bufStartIndex,
+        printf("EPOLLHUP type: %d, buf: %d, %d, %d\n", etype, einfo->bufStartIndex,
                einfo->bufEndIndex, einfo->bufLen);
         fflush(stdout);
         clean(einfo);
