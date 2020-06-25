@@ -519,6 +519,7 @@ int connOut(struct evinfo *einfo, char *outhost, char *outport) {
     // if (numRead == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
     if (checkConnected(outfd) == 0 && numRead == -1 &&
         (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    // This fd is usable.
     } else {
       if (numRead == -1) {
         perror("recv, connOut");
@@ -529,7 +530,6 @@ int connOut(struct evinfo *einfo, char *outhost, char *outport) {
 
       if (close(outfd) == -1) {
         perror("close, connOut");
-        return -1;
       }
       outfd = inetConnect(outhost, outport, SOCK_STREAM);
       if (outfd == -1) {
