@@ -781,6 +781,8 @@ void eloop(char *port,
     for (int n = 0; n < nfds; ++n) {
       einfo = (struct evinfo *)evlist[n].data.ptr;
       etype = einfo->type;
+      
+      einfo->last_active = now;
 
       if (evlist[n].events & EPOLLERR) {
         eprintf("EPOLLERR\n");
