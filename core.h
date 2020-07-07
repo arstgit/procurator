@@ -30,8 +30,8 @@
 #define BUF_FACTOR1 1
 #define BUF_FACTOR2 16
 #define CONNECT_POOL_SIZE 8
-// seconds
-#define MAX_IDLE_TIME 60 * 60
+// A connection is allowed idle MAX_IDLE_TIME seconds at most.
+#define MAX_IDLE_TIME 10 * 60
 // milliseconds
 #define EPOLL_TIMEOUT (30 * 1000)
 
