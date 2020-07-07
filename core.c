@@ -760,15 +760,11 @@ void eloop(char *port,
 
         if ((now - tmpeinfo->last_active) < MAX_IDLE_TIME) {
           activecnt++;
-          printf("now: %ld, tmpeinfo->last_active: %ld, (now - "
-                 "tmpeinfo->last_active): %ld, max: %ld\n",
-                 now, tmpeinfo->last_active, (now - tmpeinfo->last_active),
-                 MAX_IDLE_TIME);
 
           tmpeinfo = tmpeinfo->next;
           continue;
         } else {
-          eprintf("Timeout clean 1.\n");
+          eprintf("One einfo timeout, cleaning.\n");
           nexteinfo = tmpeinfo->next;
           clean(tmpeinfo);
           tmpeinfo = nexteinfo;

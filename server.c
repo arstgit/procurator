@@ -45,6 +45,9 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
 
       return -1;
     }
+
+    eprintf("Connecting to: %s", outhost);
+
     if (connOut(einfo, outhost, outport) == -1) {
       return -1;
     }
