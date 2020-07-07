@@ -278,11 +278,11 @@ int inetListen(const char *service, int backlog, socklen_t *addrlen) {
 
 void cleanOne(struct evinfo *einfo) {
   if (einfo->bufEndIndex - einfo->bufStartIndex > 0) {
-    printf("clean with Num: %d\n", einfo->bufEndIndex - einfo->bufStartIndex);
+    printf("Cleaning one einfo, dirty bytes: %d\n", einfo->bufEndIndex - einfo->bufStartIndex);
     fflush(stdout);
   }
   if (close(einfo->fd) == -1) {
-    perror("clean: close");
+    perror("Clean: close");
     exit(EXIT_FAILURE);
   }
 
