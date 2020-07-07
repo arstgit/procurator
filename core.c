@@ -278,7 +278,8 @@ int inetListen(const char *service, int backlog, socklen_t *addrlen) {
 
 void cleanOne(struct evinfo *einfo) {
   if (einfo->bufEndIndex - einfo->bufStartIndex > 0) {
-    printf("Cleaning one einfo, dirty bytes: %d\n", einfo->bufEndIndex - einfo->bufStartIndex);
+    printf("Cleaning one einfo, dirty bytes: %d\n",
+           einfo->bufEndIndex - einfo->bufStartIndex);
     fflush(stdout);
   }
   if (close(einfo->fd) == -1) {
@@ -519,7 +520,7 @@ int connOut(struct evinfo *einfo, char *outhost, char *outport) {
     // if (numRead == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
     if (checkConnected(outfd) == 0 && numRead == -1 &&
         (errno == EAGAIN || errno == EWOULDBLOCK)) {
-    // This fd is usable.
+      // This fd is usable.
     } else {
       if (numRead == -1) {
         perror("recv, connOut");
@@ -777,21 +778,21 @@ void eloop(char *port,
     for (int n = 0; n < nfds; ++n) {
       einfo = (struct evinfo *)evlist[n].data.ptr;
       etype = einfo->type;
-      
+
       einfo->last_active = now;
 
       if (evlist[n].events & EPOLLERR) {
         eprintf("EPOLLERR\n");
-        printf("EPOLLERR type: %d, buf: %d, %d, %d\n", etype, einfo->bufStartIndex,
-               einfo->bufEndIndex, einfo->bufLen);
+        printf("EPOLLERR type: %d, buf: %d, %d, %d\n", etype,
+               einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         fflush(stdout);
         clean(einfo);
         continue;
       }
       if (evlist[n].events & EPOLLHUP) {
         eprintf("EPOLLHUP\n");
-        printf("EPOLLHUP type: %d, buf: %d, %d, %d\n", etype, einfo->bufStartIndex,
-               einfo->bufEndIndex, einfo->bufLen);
+        printf("EPOLLHUP type: %d, buf: %d, %d, %d\n", etype,
+               einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         fflush(stdout);
         clean(einfo);
         continue;
