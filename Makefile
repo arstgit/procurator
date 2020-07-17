@@ -26,18 +26,19 @@ procurator-server: server.o core.o crypto.o
 curltest: curltest.o
 	$(CC) -o $@ $^
 
+.PHONY: test
 test: curltest procurator-local procurator-server
 	./curltest
 
+.PHONY: pretty
 pretty:
 	clang-format -i *.c *.h
 
+.PHONY: install
 install:
 	cp procurator-local /usr/local/bin/procurator-local
 	cp procurator-server /usr/local/bin/procurator-server
 
+.PHONY: clean
 clean:
 	rm -f *.o procurator-local procurator-server curltest
-
-.PHONY: clean test pretty install
-
