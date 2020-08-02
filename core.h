@@ -1,6 +1,8 @@
 #ifndef _CORE_H_
 #define _CORE_H_
 
+#define _BSD_SOURCE
+
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
