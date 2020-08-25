@@ -38,37 +38,36 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
       consume = headerlen;
     } else if (atyp == '\x04') {
       // IP V6 address
-      eprintf("Not implemented ipv6, stage0\n");
+      tlog(LL_DEBUG, "Not implemented ipv6, stage0\n");
       return -1;
     } else {
-      eprintf("Wrong atype\n");
+      tlog(LL_DEBUG, "Wrong atype\n");
 
       return -1;
     }
 
-    eprintf("Connecting to: %s\n", outhost);
+    tlog(LL_DEBUG, "Connecting to: %s\n", outhost);
 
     if (connOut(einfo, outhost, outport) == -1) {
+      tlog(LL_DEBUG, "connOut error");
       return -1;
     }
     // to do, numRead may exceed consume
     if (numRead > consume) {
-      outfd = einfo->ptr->fd;
-      if (sendOrStore(outfd, buf + consume, numRead - consume, 0, einfo, 0) ==
-          -1) {
-        eprintf("sendOrStore, stage0\n");
+      if (sendOrStore(0, buf + consume, numRead - consume, 0, einfo) == -1) {
+        tlog(LL_DEBUG, "sendOrStore, stage0\n");
         return -1;
       }
     }
 
     einfo->stage = 1;
   } else if (einfo->stage == 1) {
-    outfd = einfo->ptr->fd;
-    if (sendOrStore(outfd, buf, numRead, 0, einfo, 0) == -1) {
-      eprintf("sendOrStore, stage1\n");
+    if (sendOrStore(0, buf, numRead, 0, einfo) == -1) {
+      tlog(LL_DEBUG, "sendOrStore, stage1\n");
       return -1;
     }
   } else {
+    tlog(LL_DEBUG, "unknown stage");
     return -1;
   }
 

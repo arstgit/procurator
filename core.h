@@ -1,9 +1,12 @@
 #ifndef _CORE_H_
 #define _CORE_H_
 
-#define _BSD_SOURCE
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
 
 #include <arpa/inet.h>
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -16,10 +19,25 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
+#include <rdp.h>
+
 #include "crypto.h"
+
+// Log levels.
+#define LL_DEBUG 0
+#define LL_VERBOSE 1
+#define LL_NOTICE 2
+#define LL_WARNING 3
+// Only used by config options, rdpSocket.optVerbosity specifically.
+#define LL_SILIENT 9
+// Modifier to log without timestamp.
+#define LL_RAW (1 << 10)
+// Default maximum length of log messages.
+#define LOG_MAX_LEN 1024
 
 #define TCPKEEPALIVE 1;
 #define TCPKEEPIDLE 2;
@@ -32,21 +50,26 @@
 #define BUF_FACTOR1 1
 #define BUF_FACTOR2 16
 #define CONNECT_POOL_SIZE 8
+
+#define CHECK_TIMEOUT_INTERVAL 5 * 1000
+
 // A connection is allowed idle MAX_IDLE_TIME seconds at most.
-#define MAX_IDLE_TIME 10 * 60
-// milliseconds
-#define EPOLL_TIMEOUT (30 * 1000)
+#define MAX_IDLE_TIME 10 * 60 * 1000
+
+// In milliseconds.
+#define EPOLL_TIMEOUT RDP_ACTION_INTERVAL
 
 extern char *remoteHost;
 extern char *remotePort;
 extern char *localPort;
 extern char *password;
 
-enum evtype { LISTEN, IN, OUT };
+enum evtype { LISTEN, IN, OUT, RDP_IN, RDP_OUT, RDP_LISTEN };
 
 struct evinfo {
   enum evtype type;
   int fd;
+  rdpConn *c;
   char stage;
   char outconnected;
   struct encryptor encryptor;
@@ -55,7 +78,7 @@ struct evinfo {
   int bufLen;
   char *buf;
   struct evinfo *ptr;
-  time_t last_active;
+  uint64_t last_active;
   struct evinfo *prev, *next;
 };
 
@@ -66,17 +89,15 @@ struct connectPool {
 
 enum elevel { LOWEST_LEVEL, INFO_LEVEL, ERR_LEVEL, HIGHEST_LEVEL };
 
-void eprint(unsigned char *, int, ...);
-
-void eprintf(const char *, ...);
+void tlog(int level, const char *fmt, ...);
 
 void clean(struct evinfo *einfo);
 
-int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
-                int storeSelf);
+int sendOrStore(int self, void *buf, size_t len, int flags,
+                struct evinfo *einfo);
 
 struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
-                    uint32_t events);
+                    uint32_t events, rdpConn *c);
 int connOut(struct evinfo *, char *, char *);
 
 void eloop(char *port,
