@@ -899,8 +899,6 @@ void eloop(char *port,
       einfo = (struct evinfo *)evlist[n].data.ptr;
       etype = einfo->type;
 
-      tlog(LL_DEBUG, "epoll_wait, type: %d", etype);
-
       einfo->last_active = nowms;
 
       if (evlist[n].events & EPOLLERR) {
