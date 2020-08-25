@@ -14,80 +14,24 @@ char *password;
 struct evinfo *dumbevhead, *listenevinfo;
 struct connectPool connPool;
 
+rdpSocket *rdpS;
+int rdpfd;
 int efd;
 unsigned char buf[BUF_SIZE];
 unsigned char tmpBuf[TMP_BUF_SIZE];
 int serverflag;
 int connectPool[CONNECT_POOL_SIZE];
+uint64_t nowms, lastCheckms;
 
-void eprint(unsigned char *str, int num, ...) {
-  va_list valist;
-  int fd;
-  int elevel;
-  int perrorflag;
-  time_t now;
+// Return the UNIX time in millisecond.
+static inline uint64_t mstime(void) {
+  struct timeval tv;
+  uint64_t mst;
 
-  if (num > 3) {
-    exit(EXIT_FAILURE);
-  }
-
-  va_start(valist, num);
-
-  fd = STDOUT_FILENO;
-  elevel = INFO_LEVEL;
-  perrorflag = 0;
-  for (int i = 0; i < num; i++) {
-    switch (i) {
-    case 0:
-      fd = va_arg(valist, int);
-      break;
-    case 1:
-      elevel = va_arg(valist, int);
-      break;
-    case 2:
-      perrorflag = va_arg(valist, int);
-      break;
-    }
-  }
-
-  if (elevel < globalElevel)
-    return;
-
-  now = time(NULL);
-  if (now == -1) {
-    perror("time, eprint");
-    exit(EXIT_FAILURE);
-  }
-
-  if (write(fd, ctime(&now), strlen(ctime(&now)) - 1) == -1) {
-    perror("write, eprint, time");
-    exit(EXIT_FAILURE);
-  }
-  if (write(fd, " ", 1) == -1) {
-    perror("write, eprint, space");
-    exit(EXIT_FAILURE);
-  }
-
-  if (perrorflag == 1) {
-    perror(str);
-    return;
-  }
-
-  if (elevel == INFO_LEVEL) {
-    if (write(fd, str, strlen(str)) == -1) {
-      perror("write, eprint");
-      exit(EXIT_FAILURE);
-    }
-  }
-  if (elevel == ERR_LEVEL) {
-    if (write(fd, str, strlen(str)) == -1) {
-      perror("write, eprint");
-      exit(EXIT_FAILURE);
-    }
-  }
-
-  va_end(valist);
-  return;
+  gettimeofday(&tv, NULL);
+  mst = ((uint64_t)tv.tv_sec) * 1000;
+  mst += tv.tv_usec / 1000;
+  return mst;
 }
 
 static int setnonblocking(int fd) {
@@ -105,36 +49,109 @@ static int setnonblocking(int fd) {
   }
 }
 
-void eprintf(const char *fmt, ...) {
-  int size = 0;
-  char *p = NULL;
-  va_list ap;
+static int isLeapYear(time_t year) {
+  if (year % 4)
+    return 0; /* A year not divisible by 4 is not leap. */
+  else if (year % 100)
+    return 1; /* If div by 4 and not 100 is surely leap. */
+  else if (year % 400)
+    return 0; /* If div by 100 *and* not by 400 is not leap. */
+  else
+    return 1; /* If div by 100 and 400 is leap. */
+}
 
-  va_start(ap, fmt);
-  size = vsnprintf(p, size, fmt, ap);
-  va_end(ap);
+static void nolocksLocaltime(struct tm *tmp, time_t t, time_t tz, int dst) {
+  const time_t secs_min = 60;
+  const time_t secs_hour = 3600;
+  const time_t secs_day = 3600 * 24;
 
-  if (size < 0)
-    return;
+  t -= tz;                       /* Adjust for timezone. */
+  t += 3600 * dst;               /* Adjust for daylight time. */
+  time_t days = t / secs_day;    /* Days passed since epoch. */
+  time_t seconds = t % secs_day; /* Remaining seconds. */
 
-  size++; /* For '\0' */
-  p = malloc(size);
-  if (p == NULL)
-    return;
+  tmp->tm_isdst = dst;
+  tmp->tm_hour = seconds / secs_hour;
+  tmp->tm_min = (seconds % secs_hour) / secs_min;
+  tmp->tm_sec = (seconds % secs_hour) % secs_min;
 
-  va_start(ap, fmt);
-  size = vsnprintf(p, size, fmt, ap);
-  va_end(ap);
+  /* 1/1/1970 was a Thursday, that is, day 4 from the POV of the tm structure
+   * where sunday = 0, so to calculate the day of the week we have to add 4
+   * and take the modulo by 7. */
+  tmp->tm_wday = (days + 4) % 7;
 
-  if (size < 0) {
-    free(p);
-    return;
+  /* Calculate the current year. */
+  tmp->tm_year = 1970;
+  while (1) {
+    /* Leap years have one day more. */
+    time_t days_this_year = 365 + isLeapYear(tmp->tm_year);
+    if (days_this_year > days)
+      break;
+    days -= days_this_year;
+    tmp->tm_year++;
+  }
+  tmp->tm_yday = days; /* Number of day of the current year. */
+
+  /* We need to calculate in which month and day of the month we are. To do
+   * so we need to skip days according to how many days there are in each
+   * month, and adjust for the leap year that has one more day in February. */
+  int mdays[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  mdays[1] += isLeapYear(tmp->tm_year);
+
+  tmp->tm_mon = 0;
+  while (days >= mdays[tmp->tm_mon]) {
+    days -= mdays[tmp->tm_mon];
+    tmp->tm_mon++;
   }
 
-  eprint(p, 0);
+  tmp->tm_mday = days + 1; /* Add 1 since our 'days' is zero-based. */
+  tmp->tm_year -= 1900;    /* Surprisingly tm_year is year-1900. */
+}
 
-  free(p);
-  return;
+static void tlogRaw(int level, const char *msg) {
+  const char *c = ".-*#";
+  char buf[64];
+  char outputMsg[LOG_MAX_LEN + 64];
+  int n;
+  int fd = STDOUT_FILENO;
+
+  int rawmode = (level & LL_RAW);
+
+  if ((level & 0xff) < LL_DEBUG)
+    return;
+
+  if (rawmode) {
+    n = snprintf(outputMsg, sizeof(outputMsg), "%s", msg);
+    write(fd, outputMsg, n);
+  } else {
+    int off;
+    struct timeval tv;
+    time_t t;
+
+    gettimeofday(&tv, NULL);
+    struct tm tm;
+    nolocksLocaltime(&tm, tv.tv_sec, 0, 0);
+    off = strftime(buf, sizeof(buf), "%d %b %Y %H:%M:%S.", &tm);
+    snprintf(buf + off, sizeof(buf) - off, "%03d", (int)tv.tv_usec / 1000);
+    n = snprintf(outputMsg, sizeof(outputMsg), "%s %c %s\n", buf, c[level],
+                 msg);
+    write(fd, outputMsg, n);
+  }
+}
+
+//  Printf-alike style log utility.
+void tlog(int level, const char *fmt, ...) {
+  va_list ap;
+  char msg[LOG_MAX_LEN];
+
+  if ((level & 0xff) < LL_DEBUG)
+    return;
+
+  va_start(ap, fmt);
+  vsnprintf(msg, sizeof(msg), fmt, ap);
+  va_end(ap);
+
+  tlogRaw(level, msg);
 }
 
 static int populateKeyIv() {
@@ -282,8 +299,24 @@ void cleanOne(struct evinfo *einfo) {
            einfo->bufEndIndex - einfo->bufStartIndex);
     fflush(stdout);
   }
-  if (close(einfo->fd) == -1) {
-    perror("Clean: close");
+  if (einfo->type == RDP_IN || einfo->type == RDP_OUT) {
+    if (rdpConnSetUserData(einfo->c, NULL) == -1) {
+      tlog(LL_DEBUG, "rdpConnSetUserData");
+      exit(EXIT_FAILURE);
+    }
+    if (rdpConnClose(einfo->c) == -1) {
+      tlog(LL_DEBUG, "rdpConnClose");
+      exit(EXIT_FAILURE);
+    }
+  } else if (einfo->type == IN || einfo->type == OUT) {
+    if (close(einfo->fd) == -1) {
+      perror("Clean: close");
+      exit(EXIT_FAILURE);
+    }
+  } else {
+    tlog(LL_DEBUG, "einfo: type: %d, fd: %d, conn: %d, stage: %d", einfo->type,
+         einfo->fd, einfo->c, einfo->stage);
+    tlog(LL_DEBUG, "cleanOne einfo not valid type: type: %d", einfo->type);
     exit(EXIT_FAILURE);
   }
 
@@ -307,6 +340,18 @@ void clean(struct evinfo *einfo) {
   cleanOne(einfo);
 }
 
+static int sendOrRdpWrite(struct evinfo *einfo, void *buf, size_t len,
+                          int flags) {
+  if (einfo->type == RDP_IN || einfo->type == RDP_OUT) {
+    return rdpWrite(einfo->c, buf, len);
+  } else if (einfo->type == IN || einfo->type == OUT) {
+    return send(einfo->fd, buf, len, flags);
+  } else {
+    exit(1);
+    assert(0);
+  }
+}
+
 static int trySend(struct evinfo *einfo) {
   ssize_t numSend;
   size_t len;
@@ -315,7 +360,7 @@ static int trySend(struct evinfo *einfo) {
   len = einfo->bufEndIndex - einfo->bufStartIndex;
   buf = einfo->buf + einfo->bufStartIndex;
   for (; len > 0;) {
-    numSend = send(einfo->fd, buf, len, 0);
+    numSend = sendOrRdpWrite(einfo, buf, len, 0);
     if (numSend == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         break;
@@ -334,14 +379,13 @@ static int trySend(struct evinfo *einfo) {
   return 0;
 }
 
-int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
-                int storeSelf) {
+int sendOrStore(int self, void *buf, size_t len, int flags,
+                struct evinfo *einfo) {
   ssize_t numSend;
 
-  einfo = storeSelf == 1 ? einfo : einfo->ptr;
+  einfo = self == 1 ? einfo : einfo->ptr;
 
-  if ((serverflag == 1 && einfo->type == IN) ||
-      (serverflag == 0 && einfo->type == OUT)) {
+  if (einfo->type == RDP_IN || einfo->type == RDP_OUT) {
     int tmpLen;
 
     if (encrypt(&einfo->encryptor, tmpBuf, &tmpLen, buf, len, key, iv) == -1) {
@@ -358,7 +402,7 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
       einfo->buf =
           realloc(einfo->buf, BUF_FACTOR2 * (einfo->bufEndIndex + len));
       if (einfo->buf == NULL) {
-        eprintf("realloc step1\n");
+        tlog(LL_DEBUG, "realloc step1\n");
         return -1;
       }
       einfo->bufLen = BUF_FACTOR2 * (einfo->bufEndIndex + len);
@@ -372,7 +416,7 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
   }
 
   for (; len > 0;) {
-    numSend = send(fd, buf, len, flags);
+    numSend = sendOrRdpWrite(einfo, buf, len, flags);
     if (numSend == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         // to do
@@ -381,7 +425,7 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
             einfo->buf = realloc(einfo->buf, BUF_FACTOR1 * len);
 
             if (einfo->buf == NULL) {
-              eprintf("realloc step2\n");
+              tlog(LL_DEBUG, "realloc step2\n");
               return -1;
             }
             einfo->bufLen = BUF_FACTOR1 * len;
@@ -408,18 +452,10 @@ int sendOrStore(int fd, void *buf, size_t len, int flags, struct evinfo *einfo,
 }
 
 struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
-                    uint32_t events) {
+                    uint32_t events, rdpConn *c) {
   struct evinfo *einfo;
-  struct epoll_event ev;
-  time_t now;
 
-  now = time(NULL);
-  if (now == -1) {
-    perror("time, evinfo");
-    exit(EXIT_FAILURE);
-  }
-
-  if (events & EPOLLET) {
+  if ((events & EPOLLET) && (type == IN || type == OUT || type == LISTEN)) {
     if (setnonblocking(fd) == -1) {
       perror("eadd setnonblocking");
       exit(EXIT_FAILURE);
@@ -432,7 +468,23 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
     exit(EXIT_FAILURE);
   }
   einfo->type = type;
-  einfo->fd = fd;
+  if (type == RDP_IN || type == RDP_OUT) {
+    assert(c);
+
+    if (rdpConnSetUserData(c, einfo) == -1) {
+      tlog(LL_DEBUG, "rdpConnSetUserData");
+      exit(EXIT_FAILURE);
+    }
+    einfo->c = c;
+
+  } else if (type == IN || type == OUT || type == RDP_LISTEN ||
+             type == LISTEN) {
+    assert(fd != -1);
+    einfo->fd = fd;
+  } else {
+    assert(0);
+  }
+
   einfo->stage = stage;
   einfo->outconnected = 0;
   einfo->bufStartIndex = 0;
@@ -440,7 +492,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   einfo->bufLen = 0;
   einfo->buf = NULL;
   einfo->ptr = ptr;
-  einfo->last_active = now;
+  einfo->last_active = nowms;
 
   einfo->encryptor.encryptCtx = NULL;
   einfo->encryptor.decryptCtx = NULL;
@@ -457,12 +509,16 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
     einfo->next = NULL;
   }
 
-  ev.data.ptr = einfo;
-  ev.events = events;
-  if (epoll_ctl(efd, EPOLL_CTL_ADD, fd, &ev) == -1) {
-    perror("epoll_ctl: connfd");
-    exit(EXIT_FAILURE);
+  if (type != RDP_IN && type != RDP_OUT) {
+    struct epoll_event ev;
+    ev.data.ptr = einfo;
+    ev.events = events;
+    if (epoll_ctl(efd, EPOLL_CTL_ADD, fd, &ev) == -1) {
+      perror("epoll_ctl: connfd");
+      exit(EXIT_FAILURE);
+    }
   }
+
   return einfo;
 }
 
@@ -513,8 +569,10 @@ int setkeepalive(int fd) {
 int connOut(struct evinfo *einfo, char *outhost, char *outport) {
   int outfd, tmpfd;
   ssize_t numRead;
+  rdpConn *c;
 
-  if (serverflag == 0) {
+  // TO DO
+  if (0 && serverflag == 0) {
     outfd = connPool.fds[connPool.next];
     numRead = recv(outfd, buf, BUF_SIZE, MSG_PEEK);
     // if (numRead == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -526,7 +584,7 @@ int connOut(struct evinfo *einfo, char *outhost, char *outport) {
         perror("recv, connOut");
       }
       if (numRead > 0) {
-        eprintf("recv, connOut, numRead > 0.");
+        tlog(LL_DEBUG, "recv, connOut, numRead > 0.");
       }
 
       if (close(outfd) == -1) {
@@ -560,24 +618,77 @@ int connOut(struct evinfo *einfo, char *outhost, char *outport) {
     if (connPool.next++ == CONNECT_POOL_SIZE - 1)
       connPool.next = 0;
   } else {
-    outfd = inetConnect(outhost, outport, SOCK_STREAM);
-    if (outfd == -1) {
-      perror("inetConnect, connOut server");
-      return -1;
+
+    if (serverflag == 0) {
+      c = rdpNetConnect(rdpS, outhost, outport);
+      if (c == NULL) {
+        tlog(LL_DEBUG, "rdpNetConnect");
+        exit(EXIT_FAILURE);
+      }
+    } else {
+      outfd = inetConnect(outhost, outport, SOCK_STREAM);
+      if (outfd == -1) {
+        perror("inetConnect, connOut server");
+        return -1;
+      }
     }
   }
-
-  einfo->ptr = eadd(OUT, outfd, -1, einfo, EPOLLOUT | EPOLLIN | EPOLLET);
+  if (serverflag == 0) {
+    einfo->ptr = eadd(RDP_OUT, 0, -1, einfo, EPOLLOUT | EPOLLIN | EPOLLET, c);
+  } else {
+    einfo->ptr =
+        eadd(OUT, outfd, -1, einfo, EPOLLOUT | EPOLLIN | EPOLLET, NULL);
+  }
 
   return 0;
 }
 
 static int handleOutData(struct evinfo *einfo, unsigned char *buf,
                          ssize_t numRead) {
-  int infd = einfo->ptr->fd;
 
-  if (sendOrStore(infd, buf, numRead, 0, einfo, 0) == -1) {
+  if (sendOrStore(0, buf, numRead, 0, einfo) == -1) {
     perror("sendOrStore: handleOut");
+    return -1;
+  }
+  return 0;
+}
+
+static int decryptIfNeed(struct evinfo *einfo, void **dst, int *dstLen,
+                         void *src, int srcLen) {
+  if (einfo->type == RDP_IN || einfo->type == RDP_OUT) {
+    if (decrypt(&einfo->encryptor, *dst, dstLen, src, srcLen, key, iv) == -1) {
+      tlog(LL_DEBUG, "encrypt, handleIn");
+      return -1;
+    }
+    if (*dstLen > TMP_BUF_SIZE) {
+      tlog(LL_DEBUG, "recv, handleIn, tmpLen > TMP_BUF_SIZE");
+      exit(EXIT_FAILURE);
+    }
+  } else {
+    *dst = src;
+    *dstLen = srcLen;
+  }
+
+  return 0;
+}
+
+static int handleInBuf(struct evinfo *einfo,
+                       int (*handleInData)(struct evinfo *, unsigned char *,
+                                           ssize_t),
+                       void *buf, int len) {
+  int dstLen = BUF_SIZE;
+  void *dst = tmpBuf;
+
+  if (decryptIfNeed(einfo, &dst, &dstLen, buf, len) == -1) {
+    tlog(LL_DEBUG, "decryptIfNeed");
+    exit(EXIT_FAILURE);
+  }
+  if (len == BUF_SIZE) {
+    tlog(LL_DEBUG, "numRead === BUF_SIZE\n");
+  }
+
+  if (handleInData(einfo, dst, dstLen) == -1) {
+    tlog(LL_DEBUG, "handleInBuf: handleInData\n");
     return -1;
   }
   return 0;
@@ -586,14 +697,11 @@ static int handleOutData(struct evinfo *einfo, unsigned char *buf,
 static int handleIn(struct evinfo *einfo,
                     int (*handleInData)(struct evinfo *, unsigned char *,
                                         ssize_t)) {
-  int infd = einfo->fd;
-  ssize_t numRead;
-  unsigned char *bufp;
-  bufp = buf;
+  ssize_t n;
 
   for (;;) {
-    numRead = recv(infd, buf, BUF_SIZE, 0);
-    if (numRead == -1) {
+    n = recv(einfo->fd, buf, BUF_SIZE, 0);
+    if (n == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         break;
       } else {
@@ -601,31 +709,13 @@ static int handleIn(struct evinfo *einfo,
         return -1;
       }
     }
-    if (numRead == 0) {
+    if (n == 0) {
       return -1;
     }
-    if (numRead > 0) {
-      if ((serverflag == 1 && einfo->type == IN) ||
-          (serverflag == 0 && einfo->type == OUT)) {
-        int tmpLen;
-        if (decrypt(&einfo->encryptor, tmpBuf, &tmpLen, buf, numRead, key,
-                    iv) == -1) {
-          eprintf("encrypt, handleIn");
-          return -1;
-        }
-        if (tmpLen > TMP_BUF_SIZE) {
-          eprintf("recv, handleIn, tmpLen > TMP_BUF_SIZE");
-          exit(EXIT_FAILURE);
-        }
-        bufp = tmpBuf;
-        numRead = tmpLen;
-      }
-      if (numRead == BUF_SIZE) {
-        eprintf("numRead === BUF_SIZE\n");
-      }
 
-      if (handleInData(einfo, bufp, numRead) == -1) {
-        eprintf("handleIn: handleInData\n");
+    if (n > 0) {
+      if (handleInBuf(einfo, handleInData, buf, n) == -1) {
+        tlog(LL_DEBUG, "handleInBuf");
         return -1;
       }
     }
@@ -667,6 +757,48 @@ void onexit(int signum) {
   exit(EXIT_SUCCESS);
 }
 
+int afterSleep() {
+  nowms = mstime();
+
+  return 0;
+}
+
+int beforeSleep() {
+  if (nowms - lastCheckms >= CHECK_TIMEOUT_INTERVAL) {
+
+    struct evinfo *tmpeinfo, *nexteinfo;
+
+    tmpeinfo = dumbevhead->next;
+    int activecnt = 0;
+    for (;;) {
+      if (tmpeinfo == dumbevhead)
+        break;
+
+      if ((nowms - tmpeinfo->last_active) < MAX_IDLE_TIME) {
+        activecnt++;
+
+        tmpeinfo = tmpeinfo->next;
+        continue;
+      } else {
+        tlog(LL_DEBUG, "One einfo timeout, cleaning.");
+        nexteinfo = tmpeinfo->next;
+        clean(tmpeinfo);
+        tmpeinfo = nexteinfo;
+        continue;
+      }
+    }
+
+    tlog(LL_DEBUG, "activecnt: %d", activecnt);
+
+    lastCheckms = mstime();
+  }
+
+  if (rdpSocketIntervalAction(rdpS) == -1) {
+    tlog(LL_DEBUG, "rdpSocketIntervalAction");
+    exit(EXIT_FAILURE);
+  }
+}
+
 void eloop(char *port,
            int (*handleInData)(struct evinfo *, unsigned char *, ssize_t)) {
   dumbevhead = malloc(sizeof(struct evinfo));
@@ -675,10 +807,9 @@ void eloop(char *port,
   struct sigaction sa;
   ssize_t numRead;
   int nfds, listenfd, infd;
-  struct evinfo *einfo, *tmpeinfo, *nexteinfo;
+  struct evinfo *einfo;
   enum evtype etype;
   struct epoll_event ev, evlist[MAX_EVENTS];
-  time_t now;
 
   memset(&sa, 0, sizeof(sa));
   sa.sa_flags = 0;
@@ -700,6 +831,17 @@ void eloop(char *port,
 
   populateKeyIv();
 
+  rdpS = rdpSocketCreate(1, "0.0.0.0", port);
+  if (rdpS == NULL) {
+    tlog(LL_DEBUG, "rdpSocketCreate");
+    exit(EXIT_FAILURE);
+  }
+  rdpfd = rdpSocketGetProp(rdpS, RDP_PROP_FD);
+  if (rdpfd == -1) {
+    tlog(LL_DEBUG, "rdpSocket get fd");
+    exit(EXIT_FAILURE);
+  }
+
   listenfd = inetListen(port, 80, NULL);
   if (listenfd == -1) {
     perror("inetListen");
@@ -712,9 +854,11 @@ void eloop(char *port,
     exit(EXIT_FAILURE);
   }
 
-  listenevinfo = eadd(LISTEN, listenfd, -1, NULL, EPOLLIN);
+  eadd(RDP_LISTEN, rdpfd, -1, NULL, EPOLLIN | EPOLLOUT | EPOLLET, NULL);
 
-  if (serverflag == 0) {
+  listenevinfo = eadd(LISTEN, listenfd, -1, NULL, EPOLLIN, NULL);
+
+  if (0 && serverflag == 0) {
     int i, fd;
 
     connPool.next = 0;
@@ -734,10 +878,15 @@ void eloop(char *port,
     }
   }
 
-  eprintf("started!\n\n");
+  tlog(LL_DEBUG, "started!\n\n");
+
+  nowms = lastCheckms = mstime();
 
   for (;;) {
+    beforeSleep();
     nfds = epoll_wait(efd, evlist, 1, EPOLL_TIMEOUT);
+    afterSleep();
+
     // nfds = epoll_wait(efd, evlist, MAX_EVENTS, -1);
     if (nfds == -1) {
       perror("epoll_wait");
@@ -746,43 +895,16 @@ void eloop(char *port,
       exit(EXIT_FAILURE);
     }
 
-    if (nfds == 0) {
-      now = time(NULL);
-      if (now == -1) {
-        perror("time, eloop");
-        exit(EXIT_FAILURE);
-      }
-
-      tmpeinfo = dumbevhead->next;
-      int activecnt = 0;
-      for (;;) {
-        if (tmpeinfo == dumbevhead)
-          break;
-
-        if ((now - tmpeinfo->last_active) < MAX_IDLE_TIME) {
-          activecnt++;
-
-          tmpeinfo = tmpeinfo->next;
-          continue;
-        } else {
-          eprintf("One einfo timeout, cleaning.\n");
-          nexteinfo = tmpeinfo->next;
-          clean(tmpeinfo);
-          tmpeinfo = nexteinfo;
-          continue;
-        }
-      }
-      eprintf("activecnt: %d\n", activecnt);
-    }
-
-    for (int n = 0; n < nfds; ++n) {
+    for (int n = 0; n < nfds; n++) {
       einfo = (struct evinfo *)evlist[n].data.ptr;
       etype = einfo->type;
 
-      einfo->last_active = now;
+      tlog(LL_DEBUG, "epoll_wait, type: %d", etype);
+
+      einfo->last_active = nowms;
 
       if (evlist[n].events & EPOLLERR) {
-        eprintf("EPOLLERR\n");
+        tlog(LL_DEBUG, "EPOLLERR\n");
         printf("EPOLLERR type: %d, buf: %d, %d, %d\n", etype,
                einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         fflush(stdout);
@@ -790,7 +912,7 @@ void eloop(char *port,
         continue;
       }
       if (evlist[n].events & EPOLLHUP) {
-        eprintf("EPOLLHUP\n");
+        tlog(LL_DEBUG, "EPOLLHUP\n");
         printf("EPOLLHUP type: %d, buf: %d, %d, %d\n", etype,
                einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         fflush(stdout);
@@ -810,22 +932,24 @@ void eloop(char *port,
           }
 
           if (trySend(einfo) == -1) {
-            eprintf("trySend: eloop\n");
+            tlog(LL_DEBUG, "trySend: eloop\n");
             clean(einfo);
             continue;
           }
         } else if (etype == IN) {
           if (trySend(einfo) == -1) {
-            eprintf("trySend: eloop\n");
+            tlog(LL_DEBUG, "trySend: eloop\n");
             clean(einfo);
             continue;
           }
+        } else if (etype == RDP_LISTEN) {
+          tlog(LL_DEBUG, "rdp_listen epollout");
+          // continue;
         } else {
-          eprintf("wrong etype in EPOLLOUT\n");
+          tlog(LL_DEBUG, "wrong etype in EPOLLOUT, etype: %d\n", etype);
           exit(EXIT_FAILURE);
         }
       }
-
       if (evlist[n].events & EPOLLIN) {
         if (etype == LISTEN) {
           for (;;) {
@@ -838,7 +962,7 @@ void eloop(char *port,
                 exit(EXIT_FAILURE);
               }
             }
-            eadd(IN, infd, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET);
+            eadd(IN, infd, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET, NULL);
           }
           continue;
         } else if (etype == IN) {
@@ -851,8 +975,77 @@ void eloop(char *port,
             clean(einfo);
             continue;
           }
+        } else if (etype == RDP_LISTEN) {
+          int flag;
+          rdpConn *conn;
+          for (;;) {
+            ssize_t n = rdpRead(rdpS, buf, BUF_SIZE, &conn, &flag);
+            if (flag & RDP_ERROR) {
+              tlog(LL_DEBUG, "rdpRead error");
+              break;
+            }
+            if (flag & RDP_AGAIN) {
+              break;
+            }
+            if (flag & RDP_CONNECTED) {
+              tlog(LL_DEBUG, "rdp connected");
+
+              einfo = rdpConnGetUserData(conn);
+              if (einfo == NULL) {
+                tlog(LL_DEBUG, "rdpConnGetUserData");
+                exit(EXIT_FAILURE);
+              }
+
+              assert(einfo->type == RDP_OUT);
+
+              if (trySend(einfo) == -1) {
+                tlog(LL_DEBUG, "trySend: RDP_OUT connected\n");
+                clean(einfo);
+                continue;
+              }
+            }
+            if (flag & RDP_ACCEPT) {
+              tlog(LL_DEBUG, "rdp accept");
+              eadd(RDP_IN, 0, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET, conn);
+            }
+            if (flag & RDP_DATA) {
+              tlog(LL_DEBUG, "rdp data");
+
+              einfo = rdpConnGetUserData(conn);
+              if (einfo == NULL) {
+                // It means we have called clean(einfo) in other place.
+                continue;
+              }
+
+              if (n == 0) {
+                tlog(LL_DEBUG, "rdp data EOF");
+                // EOF
+                clean(einfo);
+              } else if (n > 0) {
+                if (einfo->type == RDP_IN) {
+                  if (handleInBuf(einfo, handleInData, buf, n) == -1) {
+                    tlog(LL_DEBUG, "handleInBuf RDP_LISTEN");
+                    clean(einfo);
+                  }
+                } else if (einfo->type == RDP_OUT) {
+                  if (handleInBuf(einfo, handleOutData, buf, n) == -1) {
+                    tlog(LL_DEBUG, "handleInBuf RDP_LISTEN");
+                    clean(einfo);
+                  }
+                } else {
+                  tlog(LL_DEBUG, "einfo type not RDP_IN or RDP_OUT");
+                  exit(EXIT_FAILURE);
+                }
+              } else {
+                assert(0);
+              }
+            }
+            if (flag & RDP_CONTINUE) {
+              continue;
+            }
+          }
         } else {
-          eprintf("wrong etype in EPOLLIN\n");
+          tlog(LL_DEBUG, "wrong etype in EPOLLIN\n");
           exit(EXIT_FAILURE);
         }
       }

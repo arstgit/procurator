@@ -18,21 +18,24 @@ curltest.o: curltest.c
 	$(CC) -c -o $@ $<
 
 procurator-local: local.o core.o crypto.o
-	$(CC) -o $@ $^ -lcrypto
+	$(CC) -o $@ $^ -lcrypto -lrdp
 
 procurator-server: server.o core.o crypto.o
-	$(CC) -o $@ $^ -lcrypto
+	$(CC) -o $@ $^ -lcrypto -lrdp
 
 curltest: curltest.o
 	$(CC) -o $@ $^
 
 .PHONY: test
-test: curltest procurator-local procurator-server
+test: clean curltest procurator-local procurator-server
 	./curltest
 
 .PHONY: pretty
 pretty:
 	clang-format -i *.c *.h
+
+.PHONY: anyway
+anyway: clean all
 
 .PHONY: install
 install:
