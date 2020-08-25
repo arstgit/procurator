@@ -402,7 +402,7 @@ int sendOrStore(int self, void *buf, size_t len, int flags,
       einfo->buf =
           realloc(einfo->buf, BUF_FACTOR2 * (einfo->bufEndIndex + len));
       if (einfo->buf == NULL) {
-        tlog(LL_DEBUG, "realloc step1\n");
+        tlog(LL_DEBUG, "realloc step1");
         return -1;
       }
       einfo->bufLen = BUF_FACTOR2 * (einfo->bufEndIndex + len);
@@ -425,7 +425,7 @@ int sendOrStore(int self, void *buf, size_t len, int flags,
             einfo->buf = realloc(einfo->buf, BUF_FACTOR1 * len);
 
             if (einfo->buf == NULL) {
-              tlog(LL_DEBUG, "realloc step2\n");
+              tlog(LL_DEBUG, "realloc step2");
               return -1;
             }
             einfo->bufLen = BUF_FACTOR1 * len;
@@ -684,11 +684,11 @@ static int handleInBuf(struct evinfo *einfo,
     exit(EXIT_FAILURE);
   }
   if (len == BUF_SIZE) {
-    tlog(LL_DEBUG, "numRead === BUF_SIZE\n");
+    tlog(LL_DEBUG, "numRead === BUF_SIZE");
   }
 
   if (handleInData(einfo, dst, dstLen) == -1) {
-    tlog(LL_DEBUG, "handleInBuf: handleInData\n");
+    tlog(LL_DEBUG, "handleInBuf: handleInData");
     return -1;
   }
   return 0;
@@ -878,7 +878,7 @@ void eloop(char *port,
     }
   }
 
-  tlog(LL_DEBUG, "started!\n\n");
+  tlog(LL_DEBUG, "started!");
 
   nowms = lastCheckms = mstime();
 
@@ -902,7 +902,7 @@ void eloop(char *port,
       einfo->last_active = nowms;
 
       if (evlist[n].events & EPOLLERR) {
-        tlog(LL_DEBUG, "EPOLLERR\n");
+        tlog(LL_DEBUG, "EPOLLERR");
         printf("EPOLLERR type: %d, buf: %d, %d, %d\n", etype,
                einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         fflush(stdout);
@@ -910,7 +910,7 @@ void eloop(char *port,
         continue;
       }
       if (evlist[n].events & EPOLLHUP) {
-        tlog(LL_DEBUG, "EPOLLHUP\n");
+        tlog(LL_DEBUG, "EPOLLHUP");
         printf("EPOLLHUP type: %d, buf: %d, %d, %d\n", etype,
                einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         fflush(stdout);
@@ -930,18 +930,17 @@ void eloop(char *port,
           }
 
           if (trySend(einfo) == -1) {
-            tlog(LL_DEBUG, "trySend: eloop\n");
+            tlog(LL_DEBUG, "trySend: eloop");
             clean(einfo);
             continue;
           }
         } else if (etype == IN) {
           if (trySend(einfo) == -1) {
-            tlog(LL_DEBUG, "trySend: eloop\n");
+            tlog(LL_DEBUG, "trySend: eloop");
             clean(einfo);
             continue;
           }
         } else if (etype == RDP_LISTEN) {
-          tlog(LL_DEBUG, "rdp_listen epollout");
           // continue;
         } else {
           tlog(LL_DEBUG, "wrong etype in EPOLLOUT, etype: %d\n", etype);
@@ -997,7 +996,7 @@ void eloop(char *port,
               assert(einfo->type == RDP_OUT);
 
               if (trySend(einfo) == -1) {
-                tlog(LL_DEBUG, "trySend: RDP_OUT connected\n");
+                tlog(LL_DEBUG, "trySend: RDP_OUT connected");
                 clean(einfo);
                 continue;
               }
@@ -1007,8 +1006,6 @@ void eloop(char *port,
               eadd(RDP_IN, 0, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET, conn);
             }
             if (flag & RDP_DATA) {
-              tlog(LL_DEBUG, "rdp data");
-
               einfo = rdpConnGetUserData(conn);
               if (einfo == NULL) {
                 // It means we have called clean(einfo) in other place.
@@ -1043,7 +1040,7 @@ void eloop(char *port,
             }
           }
         } else {
-          tlog(LL_DEBUG, "wrong etype in EPOLLIN\n");
+          tlog(LL_DEBUG, "wrong etype in EPOLLIN");
           exit(EXIT_FAILURE);
         }
       }

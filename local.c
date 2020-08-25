@@ -15,7 +15,7 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
     }
 
     if (sendOrStore(1, "\x05\x00", 2, 0, einfo) == -1) {
-      tlog(LL_DEBUG, "sendOrStore, stage0\n");
+      tlog(LL_DEBUG, "sendOrStore, stage0");
       return -1;
     }
 
@@ -44,39 +44,39 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
         memcpy(reqAddr, buf + 3, addrlen);
       } else if (atyp == '\x04') {
         // IP V6 address
-        tlog(LL_DEBUG, "wrong atyp \x04, stage1\n");
+        tlog(LL_DEBUG, "wrong atyp \x04, stage1");
         return -1;
       } else {
-        tlog(LL_DEBUG, "Not implemented atype\n");
+        tlog(LL_DEBUG, "Not implemented atype");
         return -1;
       }
 
       if (sendOrStore(0, reqAddr, addrlen, 0, einfo) == -1) {
-        tlog(LL_DEBUG, "sendOrStore, stage1, write to outfd\n");
+        tlog(LL_DEBUG, "sendOrStore, stage1, write to outfd");
         return -1;
       }
 
       if (sendOrStore(1, "\x05\x00\x00\x01\x00\x00\x00\x00\x00\x01", 10, 0,
                       einfo) == -1) {
-        tlog(LL_DEBUG, "sendOrStore, stage1, write to infd\n");
+        tlog(LL_DEBUG, "sendOrStore, stage1, write to infd");
         return -1;
       }
 
       einfo->stage = 2;
     } else if (cmd == '\x02') {
       // BIND
-      tlog(LL_DEBUG, "Not implemented cmd 02\n");
+      tlog(LL_DEBUG, "Not implemented cmd 02");
       return -1;
     } else if (cmd == '\x03') {
       // UDP ASSOCIATE
-      tlog(LL_DEBUG, "Not implemented cmd 03\n");
+      tlog(LL_DEBUG, "Not implemented cmd 03");
       return -1;
     } else {
       return -1;
     }
   } else if (einfo->stage == 2) {
     if (sendOrStore(0, buf, numRead, 0, einfo) == -1) {
-      tlog(LL_DEBUG, "sendOrStore, stage2\n");
+      tlog(LL_DEBUG, "sendOrStore, stage2");
       return -1;
     }
   } else {
