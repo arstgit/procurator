@@ -1,6 +1,6 @@
 CC=gcc
 
-DEPS = core.h
+DEPS = core.h librdp/rdp.h
 BUILD = release
 CFLAGS_release = 
 CFLAGS_debug = -g -O0
@@ -14,14 +14,17 @@ all: procurator-local procurator-server
 %.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+librdp/librdp.a: librdp/rdp.h librdp/rdp.c
+	cd librdp && make BUILD=$(BUILD)
+
 curltest.o: curltest.c
 	$(CC) -c -o $@ $<
 
-procurator-local: local.o core.o crypto.o
-	$(CC) -o $@ $^ -lcrypto -lrdp
+procurator-local: local.o core.o crypto.o librdp/librdp.a
+	$(CC) -o $@ $^ -lcrypto
 
-procurator-server: server.o core.o crypto.o
-	$(CC) -o $@ $^ -lcrypto -lrdp
+procurator-server: server.o core.o crypto.o librdp/librdp.a
+	$(CC) -o $@ $^ -lcrypto
 
 curltest: curltest.o
 	$(CC) -o $@ $^
@@ -44,4 +47,5 @@ install:
 
 .PHONY: clean
 clean:
-	rm -f *.o procurator-local procurator-server curltest
+	rm -f *.o **/*.o procurator-local procurator-server curltest
+	cd librdp/ && make clean

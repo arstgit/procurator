@@ -11,7 +11,9 @@ char *remotePort;
 char *localPort;
 char *password;
 
-struct evinfo *dumbevhead, *listenevinfo;
+list *evinfolist;
+
+struct evinfo *listenevinfo;
 struct connectPool connPool;
 
 rdpSocket *rdpS;
@@ -328,9 +330,9 @@ void cleanOne(struct evinfo *einfo) {
   }
   freeCipher(&einfo->encryptor);
 
-  if (einfo->type == IN) {
-    einfo->prev->next = einfo->next;
-    einfo->next->prev = einfo->prev;
+  if (einfo->type == IN || einfo->type == RDP_IN) {
+    assert(einfo->node);
+    listNodeDestroy(evinfolist, einfo->node);
   }
 
   free(einfo);
@@ -372,6 +374,8 @@ static int trySend(struct evinfo *einfo) {
         return -1;
       }
     } else {
+      assert(numSend != 0);
+
       len -= numSend;
       buf = buf + numSend;
     }
@@ -443,6 +447,8 @@ int sendOrStore(int self, void *buf, size_t len, int flags,
         return -1;
       }
     } else {
+      assert(numSend != 0);
+
       len -= numSend;
       buf = buf + numSend;
     }
@@ -488,6 +494,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
     assert(0);
   }
 
+  einfo->node = NULL;
   einfo->state = ES_IDLE;
   einfo->stage = stage;
   einfo->outconnected = 0;
@@ -504,13 +511,12 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   einfo->encryptor.receivedIv = 0;
 
   if (einfo->type == IN || einfo->type == RDP_IN) {
-    dumbevhead->prev->next = einfo;
-    einfo->prev = dumbevhead->prev;
-    dumbevhead->prev = einfo;
-    einfo->next = dumbevhead;
+    einfo->node = listNodeAddHead(evinfolist, einfo);
+    if (einfo->node == NULL) {
+      tlog(LL_DEBUG, "listNodeAddHead");
+      exit(EXIT_FAILURE);
+    }
   } else {
-    einfo->prev = NULL;
-    einfo->next = NULL;
   }
 
   if (type != RDP_IN && type != RDP_OUT) {
@@ -627,7 +633,7 @@ int connOut(struct evinfo *einfo, char *outhost, char *outport) {
       c = rdpNetConnect(rdpS, outhost, outport);
       if (c == NULL) {
         tlog(LL_DEBUG, "rdpNetConnect");
-        exit(EXIT_FAILURE);
+        return -1;
       }
     } else {
       outfd = inetConnect(outhost, outport, SOCK_STREAM);
@@ -728,39 +734,12 @@ static int handleIn(struct evinfo *einfo,
   return 0;
 }
 
-void onquit(int signum) {
-  struct evinfo *tmpeinfo, *nexteinfo;
-
-  tmpeinfo = dumbevhead->next;
-  for (;;) {
-    if (tmpeinfo == dumbevhead)
-      break;
-
-    tlog(LL_DEBUG, "cleaning on quit");
-
-    nexteinfo = tmpeinfo->next;
-    clean(tmpeinfo);
-    tmpeinfo = nexteinfo;
-  }
-}
+void onquit(int signum) { listDestroy(evinfolist); }
 
 void onexit(int signum) {
-  struct evinfo *tmpeinfo, *nexteinfo;
-
-  tmpeinfo = dumbevhead->next;
-  for (;;) {
-    if (tmpeinfo == dumbevhead)
-      break;
-
-    tlog(LL_DEBUG, "cleaning on exit");
-
-    nexteinfo = tmpeinfo->next;
-    clean(tmpeinfo);
-    tmpeinfo = nexteinfo;
-  }
+  listDestroy(evinfolist);
 
   free(listenevinfo);
-  free(dumbevhead);
 
   exit(EXIT_SUCCESS);
 }
@@ -773,25 +752,23 @@ int afterSleep() {
 
 int beforeSleep() {
   if (nowms - lastCheckms >= CHECK_TIMEOUT_INTERVAL) {
-
-    struct evinfo *tmpeinfo, *nexteinfo;
-
-    tmpeinfo = dumbevhead->next;
+    listIterator *iter = listIteratorCreate(evinfolist, LIST_START_HEAD);
+    listNode *node;
     int activecnt = 0;
-    for (;;) {
-      if (tmpeinfo == dumbevhead)
-        break;
+    while (node = listIteratorNext(iter)) {
+      struct evinfo *curinfo = node->value;
 
-      if ((nowms - tmpeinfo->last_active) < MAX_IDLE_TIME) {
+      if ((nowms - curinfo->last_active) < MAX_IDLE_TIME) {
         activecnt++;
-
-        tmpeinfo = tmpeinfo->next;
+        if (curinfo->bufEndIndex - curinfo->bufStartIndex > 0) {
+          tlog(LL_DEBUG, "dirty bytes: %d",
+               curinfo->bufEndIndex - curinfo->bufStartIndex);
+        }
         continue;
       } else {
         tlog(LL_DEBUG, "cleaning. timeout.");
-        nexteinfo = tmpeinfo->next;
-        clean(tmpeinfo);
-        tmpeinfo = nexteinfo;
+
+        clean(curinfo);
         continue;
       }
     }
@@ -801,16 +778,17 @@ int beforeSleep() {
     lastCheckms = mstime();
   }
 
-  if (rdpSocketIntervalAction(rdpS) == -1) {
+  int timeout;
+  if ((timeout = rdpSocketIntervalAction(rdpS)) == -1) {
     tlog(LL_DEBUG, "rdpSocketIntervalAction");
     exit(EXIT_FAILURE);
   }
+  return timeout;
 }
 
 void eloop(char *port,
            int (*handleInData)(struct evinfo *, unsigned char *, ssize_t)) {
-  dumbevhead = malloc(sizeof(struct evinfo));
-  dumbevhead->prev = dumbevhead->next = dumbevhead;
+  evinfolist = listCreate();
 
   struct sigaction sa;
   ssize_t numRead;
@@ -891,8 +869,10 @@ void eloop(char *port,
   nowms = lastCheckms = mstime();
 
   for (;;) {
-    beforeSleep();
-    nfds = epoll_wait(efd, evlist, 1, EPOLL_TIMEOUT);
+    int timeout;
+    timeout = beforeSleep();
+    assert(timeout > 0);
+    nfds = epoll_wait(efd, evlist, 1, timeout);
     afterSleep();
 
     // nfds = epoll_wait(efd, evlist, MAX_EVENTS, -1);
@@ -946,7 +926,7 @@ void eloop(char *port,
             continue;
           }
         } else if (etype == RDP_LISTEN) {
-          // continue;
+          // Resend is triggered by rdpReadPoll() return flag.
         } else {
           tlog(LL_DEBUG, "wrong etype in EPOLLOUT, etype: %d\n", etype);
           exit(EXIT_FAILURE);
@@ -983,9 +963,9 @@ void eloop(char *port,
           int flag;
           rdpConn *conn;
           for (;;) {
-            ssize_t n = rdpRead(rdpS, buf, BUF_SIZE, &conn, &flag);
+            ssize_t n = rdpReadPoll(rdpS, buf, BUF_SIZE, &conn, &flag);
             if (flag & RDP_ERROR) {
-              tlog(LL_DEBUG, "rdpRead error");
+              tlog(LL_DEBUG, "rdpReadPoll error");
               break;
             }
             if (flag & RDP_AGAIN) {
@@ -1025,11 +1005,13 @@ void eloop(char *port,
                 clean(einfo);
               } else if (n > 0) {
                 if (einfo->type == RDP_IN) {
+                  assert(serverflag == 1);
                   if (handleInBuf(einfo, handleInData, buf, n) == -1) {
                     tlog(LL_DEBUG, "cleaning. handleInBuf RDP_IN");
                     clean(einfo);
                   }
                 } else if (einfo->type == RDP_OUT) {
+                  assert(serverflag == 0);
                   if (handleInBuf(einfo, handleOutData, buf, n) == -1) {
                     tlog(LL_DEBUG, "cleaning. handleInBuf RDP_OUT");
                     clean(einfo);
@@ -1040,6 +1022,20 @@ void eloop(char *port,
                 }
               } else {
                 assert(0);
+              }
+            }
+
+            if (flag & RDP_POLLOUT) {
+              tlog(LL_DEBUG, "RDP_POLLOUT");
+
+              einfo = rdpConnGetUserData(conn);
+              if (einfo == NULL) {
+                // It means we have called clean(einfo) in other place.
+                continue;
+              }
+              if (trySend(einfo) == -1) {
+                tlog(LL_DEBUG, "cleaning. trySend: eloop RDP_POLLOUT");
+                clean(einfo);
               }
             }
             if (flag & RDP_CONTINUE) {

@@ -23,16 +23,17 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <rdp.h>
-
 #include "crypto.h"
+
+#include "liblist/list.h"
+#include "librdp/rdp.h"
 
 // Log levels.
 #define LL_DEBUG 0
 #define LL_VERBOSE 1
 #define LL_NOTICE 2
 #define LL_WARNING 3
-// Only used by config options, rdpSocket.optVerbosity specifically.
+// Only used by config options, rdpSocket.verbosity specifically.
 #define LL_SILIENT 9
 // Modifier to log without timestamp.
 #define LL_RAW (1 << 10)
@@ -56,21 +57,16 @@
 // A connection is allowed idle MAX_IDLE_TIME seconds at most.
 #define MAX_IDLE_TIME 10 * 60 * 1000
 
-// In milliseconds.
-#define EPOLL_TIMEOUT RDP_ACTION_INTERVAL
-
 extern char *remoteHost;
 extern char *remotePort;
 extern char *localPort;
 extern char *password;
 
 enum evtype { LISTEN, IN, OUT, RDP_IN, RDP_OUT, RDP_LISTEN };
-enum evstate {
-  ES_IDLE,
-  ES_DESTROY
-};
+enum evstate { ES_IDLE, ES_DESTROY };
 
 struct evinfo {
+  listNode *node;
   enum evstate state;
   enum evtype type;
   int fd;
@@ -84,7 +80,6 @@ struct evinfo {
   char *buf;
   struct evinfo *ptr;
   uint64_t last_active;
-  struct evinfo *prev, *next;
 };
 
 struct connectPool {

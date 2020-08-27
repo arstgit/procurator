@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Check out the repo
         uses: actions/checkout@v2
+      - name: Update submodule
+        run: git submodule update --init --recursive
       - name: Push to Docker Hub
         uses: docker/build-push-action@v1
         with:

@@ -12,9 +12,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: get librdp
-      run: git clone https://github.com/derekchuank/rdp && cd rdp && make && make install
-
-    - uses: actions/checkout@v2
+    - name: Check out the repo
+      uses: actions/checkout@v2
+    - name: Update submodule
+      run: git submodule update --init --recursive
     - name: make test
       run: make test
