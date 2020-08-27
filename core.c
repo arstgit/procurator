@@ -3,7 +3,7 @@
 unsigned char key[32];
 unsigned char iv[16];
 
-int globalElevel = INFO_LEVEL;
+int globalLogLevel;
 
 // User input config.
 char *remoteHost;
@@ -117,7 +117,7 @@ static void tlogRaw(int level, const char *msg) {
 
   int rawmode = (level & LL_RAW);
 
-  if ((level & 0xff) < LL_DEBUG)
+  if ((level & 0xff) < globalLogLevel)
     return;
 
   if (rawmode) {
@@ -133,8 +133,9 @@ static void tlogRaw(int level, const char *msg) {
     nolocksLocaltime(&tm, tv.tv_sec, 0, 0);
     off = strftime(buf, sizeof(buf), "%d %b %Y %H:%M:%S.", &tm);
     snprintf(buf + off, sizeof(buf) - off, "%03d", (int)tv.tv_usec / 1000);
-    n = snprintf(outputMsg, sizeof(outputMsg), "%s %c %s\n", buf, c[level],
-                 msg);
+    n = snprintf(outputMsg, sizeof(outputMsg), "[%s] %s %c %s\n",
+                 serverflag ? "procurator-server" : "procurator-local", buf,
+                 c[level], msg);
     write(fd, outputMsg, n);
   }
 }
@@ -144,7 +145,7 @@ void tlog(int level, const char *fmt, ...) {
   va_list ap;
   char msg[LOG_MAX_LEN];
 
-  if ((level & 0xff) < LL_DEBUG)
+  if ((level & 0xff) < globalLogLevel)
     return;
 
   va_start(ap, fmt);
@@ -294,10 +295,12 @@ int inetListen(const char *service, int backlog, socklen_t *addrlen) {
 }
 
 void cleanOne(struct evinfo *einfo) {
+  assert(einfo->state != ES_DESTROY);
+  einfo->state = ES_DESTROY;
+
   if (einfo->bufEndIndex - einfo->bufStartIndex > 0) {
-    printf("Cleaning one einfo, dirty bytes: %d\n",
-           einfo->bufEndIndex - einfo->bufStartIndex);
-    fflush(stdout);
+    tlog(LL_VERBOSE, "cleaning dirty bytes: %d",
+         einfo->bufEndIndex - einfo->bufStartIndex);
   }
   if (einfo->type == RDP_IN || einfo->type == RDP_OUT) {
     if (rdpConnSetUserData(einfo->c, NULL) == -1) {
@@ -305,7 +308,7 @@ void cleanOne(struct evinfo *einfo) {
       exit(EXIT_FAILURE);
     }
     if (rdpConnClose(einfo->c) == -1) {
-      tlog(LL_DEBUG, "rdpConnClose");
+      tlog(LL_DEBUG, "rdpConnClose error");
       exit(EXIT_FAILURE);
     }
   } else if (einfo->type == IN || einfo->type == OUT) {
@@ -314,9 +317,9 @@ void cleanOne(struct evinfo *einfo) {
       exit(EXIT_FAILURE);
     }
   } else {
-    tlog(LL_DEBUG, "einfo: type: %d, fd: %d, conn: %d, stage: %d", einfo->type,
-         einfo->fd, einfo->c, einfo->stage);
-    tlog(LL_DEBUG, "cleanOne einfo not valid type: type: %d", einfo->type);
+    tlog(LL_DEBUG,
+         "clean not valid type. einfo: type: %d, fd: %d, conn: %d, stage: %d",
+         einfo->type, einfo->fd, einfo->c, einfo->stage);
     exit(EXIT_FAILURE);
   }
 
@@ -485,6 +488,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
     assert(0);
   }
 
+  einfo->state = ES_IDLE;
   einfo->stage = stage;
   einfo->outconnected = 0;
   einfo->bufStartIndex = 0;
@@ -499,7 +503,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   einfo->encryptor.sentIv = 0;
   einfo->encryptor.receivedIv = 0;
 
-  if (einfo->type == IN) {
+  if (einfo->type == IN || einfo->type == RDP_IN) {
     dumbevhead->prev->next = einfo;
     einfo->prev = dumbevhead->prev;
     dumbevhead->prev = einfo;
@@ -732,6 +736,8 @@ void onquit(int signum) {
     if (tmpeinfo == dumbevhead)
       break;
 
+    tlog(LL_DEBUG, "cleaning on quit");
+
     nexteinfo = tmpeinfo->next;
     clean(tmpeinfo);
     tmpeinfo = nexteinfo;
@@ -745,6 +751,8 @@ void onexit(int signum) {
   for (;;) {
     if (tmpeinfo == dumbevhead)
       break;
+
+    tlog(LL_DEBUG, "cleaning on exit");
 
     nexteinfo = tmpeinfo->next;
     clean(tmpeinfo);
@@ -780,7 +788,7 @@ int beforeSleep() {
         tmpeinfo = tmpeinfo->next;
         continue;
       } else {
-        tlog(LL_DEBUG, "One einfo timeout, cleaning.");
+        tlog(LL_DEBUG, "cleaning. timeout.");
         nexteinfo = tmpeinfo->next;
         clean(tmpeinfo);
         tmpeinfo = nexteinfo;
@@ -902,18 +910,14 @@ void eloop(char *port,
       einfo->last_active = nowms;
 
       if (evlist[n].events & EPOLLERR) {
-        tlog(LL_DEBUG, "EPOLLERR");
-        printf("EPOLLERR type: %d, buf: %d, %d, %d\n", etype,
-               einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
-        fflush(stdout);
+        tlog(LL_DEBUG, "cleaning. EPOLLERR type: %d, buf: %d, %d, %d.", etype,
+             einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         clean(einfo);
         continue;
       }
       if (evlist[n].events & EPOLLHUP) {
-        tlog(LL_DEBUG, "EPOLLHUP");
-        printf("EPOLLHUP type: %d, buf: %d, %d, %d\n", etype,
-               einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
-        fflush(stdout);
+        tlog(LL_DEBUG, "cleaning. EPOLLHUP type: %d, buf: %d, %d, %d\n", etype,
+             einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         clean(einfo);
         continue;
       }
@@ -922,6 +926,7 @@ void eloop(char *port,
         if (etype == OUT) {
           if (einfo->outconnected == 0) {
             if (connOutConnected(einfo) == -1) {
+              tlog(LL_DEBUG, "cleaning, not connected.");
               clean(einfo);
               continue;
             } else {
@@ -930,13 +935,13 @@ void eloop(char *port,
           }
 
           if (trySend(einfo) == -1) {
-            tlog(LL_DEBUG, "trySend: eloop");
+            tlog(LL_DEBUG, "cleaning. trySend: eloop");
             clean(einfo);
             continue;
           }
         } else if (etype == IN) {
           if (trySend(einfo) == -1) {
-            tlog(LL_DEBUG, "trySend: eloop");
+            tlog(LL_DEBUG, "cleaning. trySend: eloop");
             clean(einfo);
             continue;
           }
@@ -964,11 +969,13 @@ void eloop(char *port,
           continue;
         } else if (etype == IN) {
           if (handleIn(einfo, handleInData) == -1) {
+            tlog(LL_DEBUG, "cleaning, handlein, etype == IN.");
             clean(einfo);
             continue;
           }
         } else if (etype == OUT) {
           if (handleIn(einfo, handleOutData) == -1) {
+            tlog(LL_DEBUG, "cleaning, handlein, etype == OUT.");
             clean(einfo);
             continue;
           }
@@ -996,7 +1003,7 @@ void eloop(char *port,
               assert(einfo->type == RDP_OUT);
 
               if (trySend(einfo) == -1) {
-                tlog(LL_DEBUG, "trySend: RDP_OUT connected");
+                tlog(LL_DEBUG, "cleaning. trySend: RDP_OUT connected");
                 clean(einfo);
                 continue;
               }
@@ -1013,18 +1020,18 @@ void eloop(char *port,
               }
 
               if (n == 0) {
-                tlog(LL_DEBUG, "rdp data EOF");
+                tlog(LL_DEBUG, "cleaning. rdp data EOF");
                 // EOF
                 clean(einfo);
               } else if (n > 0) {
                 if (einfo->type == RDP_IN) {
                   if (handleInBuf(einfo, handleInData, buf, n) == -1) {
-                    tlog(LL_DEBUG, "handleInBuf RDP_LISTEN");
+                    tlog(LL_DEBUG, "cleaning. handleInBuf RDP_IN");
                     clean(einfo);
                   }
                 } else if (einfo->type == RDP_OUT) {
                   if (handleInBuf(einfo, handleOutData, buf, n) == -1) {
-                    tlog(LL_DEBUG, "handleInBuf RDP_LISTEN");
+                    tlog(LL_DEBUG, "cleaning. handleInBuf RDP_OUT");
                     clean(einfo);
                   }
                 } else {

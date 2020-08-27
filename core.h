@@ -65,8 +65,13 @@ extern char *localPort;
 extern char *password;
 
 enum evtype { LISTEN, IN, OUT, RDP_IN, RDP_OUT, RDP_LISTEN };
+enum evstate {
+  ES_IDLE,
+  ES_DESTROY
+};
 
 struct evinfo {
+  enum evstate state;
   enum evtype type;
   int fd;
   rdpConn *c;
@@ -86,8 +91,6 @@ struct connectPool {
   int fds[CONNECT_POOL_SIZE];
   int next;
 };
-
-enum elevel { LOWEST_LEVEL, INFO_LEVEL, ERR_LEVEL, HIGHEST_LEVEL };
 
 void tlog(int level, const char *fmt, ...);
 

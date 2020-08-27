@@ -1,6 +1,7 @@
 #include "core.h"
 
 extern int serverflag;
+extern int globalLogLevel;
 
 static char reqAddr[259];
 
@@ -96,6 +97,7 @@ static void usage(void) {
 
 int main(int argc, char **argv) {
   serverflag = 0;
+  globalLogLevel = LL_DEBUG;
 
   // Read config from argv.
   for (int i = 1; i < argc; i++) {
@@ -118,6 +120,16 @@ int main(int argc, char **argv) {
 
     if (!strcmp(argv[i], "--password")) {
       password = argv[++i];
+      continue;
+    }
+
+    if (!strcmp(argv[i], "--log-level")) {
+      if (!strcmp(argv[++i], "LL_DEBUG")) {
+        globalLogLevel = LL_DEBUG;
+      }
+      if (!strcmp(argv[i], "LL_VERBOSE")) {
+        globalLogLevel = LL_VERBOSE;
+      }
       continue;
     }
   }
