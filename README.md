@@ -16,7 +16,7 @@ Environment:
 
 Libraries: 
   - libssl-dev.
-  - librdp. https://github.com/derekchuank/librdp
+  - librdp. https://github.com/derekchuank/librdp. Needed only after version v1.0.0. In fact, after that, the connections between procurator-local and procurator-server switched from TCP to UDP.
 
 ## Compile & Install
 

@@ -990,7 +990,12 @@ void eloop(char *port,
             }
             if (flag & RDP_ACCEPT) {
               tlog(LL_DEBUG, "rdp accept");
-              eadd(RDP_IN, 0, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET, conn);
+              // Only accept a connection on server end.
+              if (serverflag == 1) {
+                eadd(RDP_IN, 0, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET, conn);
+              } else {
+                rdpConnClose(conn);
+              }
             }
             if (flag & RDP_DATA) {
               einfo = rdpConnGetUserData(conn);
