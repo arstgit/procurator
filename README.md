@@ -11,9 +11,12 @@ Socks5 proxy client and server.
 [www.tiaoxingyubolang.com](https://www.tiaoxingyubolang.com/article/2020-03-22_procurator1)
 
 ## Prerequisites
+Environment: 
+  - Linux.
 
-- libssl-dev.
-- librdp. https://github.com/derekchuank/rdp
+Libraries: 
+  - libssl-dev.
+  - librdp. https://github.com/derekchuank/librdp
 
 ## Compile & Install
 
