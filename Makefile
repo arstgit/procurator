@@ -1,6 +1,6 @@
 CC=gcc
 
-DEPS = core.h librdp/rdp.h
+DEPS = core.h librdp/rdp.h liblist/list.h
 BUILD = release
 CFLAGS_release = 
 CFLAGS_debug = -g -O0
@@ -20,10 +20,10 @@ librdp/librdp.a: librdp/rdp.h librdp/rdp.c
 curltest.o: curltest.c
 	$(CC) -c -o $@ $<
 
-procurator-local: local.o core.o crypto.o librdp/librdp.a
+procurator-local: local.o core.o crypto.o librdp/librdp.a liblist/list.o
 	$(CC) -o $@ $^ -lcrypto
 
-procurator-server: server.o core.o crypto.o librdp/librdp.a
+procurator-server: server.o core.o crypto.o librdp/librdp.a liblist/list.o
 	$(CC) -o $@ $^ -lcrypto
 
 curltest: curltest.o
