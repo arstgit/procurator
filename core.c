@@ -12,8 +12,9 @@ char *localPort;
 char *password;
 
 list *evinfolist;
+listIterator *evinfolistIter;
 
-struct evinfo *listenevinfo;
+struct evinfo *listenevinfo, *rdpListenevinfo;
 struct connectPool connPool;
 
 rdpSocket *rdpS;
@@ -734,15 +735,22 @@ static int handleIn(struct evinfo *einfo,
   return 0;
 }
 
-void onquit(int signum) { listDestroy(evinfolist); }
-
-void onexit(int signum) {
+int destroyAll() {
+  listIteratorDestroy(evinfolistIter);
   listDestroy(evinfolist);
 
+  close(listenevinfo->fd);
   free(listenevinfo);
+
+  rdpSocketDestroy(rdpS);
+  free(rdpListenevinfo);
 
   exit(EXIT_SUCCESS);
 }
+
+void onquit(int signum) { destroyAll(); }
+
+void onexit(int signum) { destroyAll(); }
 
 int afterSleep() {
   nowms = mstime();
@@ -752,10 +760,10 @@ int afterSleep() {
 
 int beforeSleep() {
   if (nowms - lastCheckms >= CHECK_TIMEOUT_INTERVAL) {
-    listIterator *iter = listIteratorCreate(evinfolist, LIST_START_HEAD);
     listNode *node;
     int activecnt = 0;
-    while (node = listIteratorNext(iter)) {
+    listIteratorRewind(evinfolist, evinfolistIter);
+    while (node = listIteratorNext(evinfolistIter)) {
       struct evinfo *curinfo = node->value;
 
       if ((nowms - curinfo->last_active) < MAX_IDLE_TIME) {
@@ -789,6 +797,7 @@ int beforeSleep() {
 void eloop(char *port,
            int (*handleInData)(struct evinfo *, unsigned char *, ssize_t)) {
   evinfolist = listCreate();
+  evinfolistIter = listIteratorCreate(evinfolist, LIST_START_HEAD);
 
   struct sigaction sa;
   ssize_t numRead;
@@ -840,7 +849,8 @@ void eloop(char *port,
     exit(EXIT_FAILURE);
   }
 
-  eadd(RDP_LISTEN, rdpfd, -1, NULL, EPOLLIN | EPOLLOUT | EPOLLET, NULL);
+  rdpListenevinfo =
+      eadd(RDP_LISTEN, rdpfd, -1, NULL, EPOLLIN | EPOLLOUT | EPOLLET, NULL);
 
   listenevinfo = eadd(LISTEN, listenfd, -1, NULL, EPOLLIN, NULL);
 
