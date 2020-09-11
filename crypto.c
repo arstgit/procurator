@@ -24,9 +24,9 @@ static int _encrypt(void *ctx, unsigned char *desttext, int *desttext_len,
                     unsigned char *sourcetext, int sourcetext_len,
                     int encryptFlag) {
   // Uncomment this to cancel encrypt/decrypt, for debug purpose.
-  // *desttext_len = sourcetext_len;
-  // memcpy(desttext, sourcetext, sourcetext_len);
-  // return 0;
+  *desttext_len = sourcetext_len;
+  memcpy(desttext, sourcetext, sourcetext_len);
+  return 0;
 
   if (1 != (encryptFlag == 1 ? EVP_EncryptUpdate : EVP_DecryptUpdate)(
                (EVP_CIPHER_CTX *)ctx, desttext, desttext_len, sourcetext,
