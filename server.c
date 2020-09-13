@@ -28,7 +28,7 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
 
       memcpy(outhost, ipv4, strlen(ipv4) + 1);
       snprintf(outport, 6, "%hu", ntohs(*(uint16_t *)(buf + 5)));
-      headerlen = 8;
+      headerlen = 7;
       consume = headerlen;
     } else if (atyp == '\x03') {
       // DOMAINNAME
