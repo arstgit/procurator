@@ -297,7 +297,7 @@ int inetListen(const char *service, int backlog, socklen_t *addrlen) {
   return inetPassiveSocket(service, SOCK_STREAM, addrlen, 1, backlog);
 }
 
-void cleanOne(struct evinfo *einfo) {
+void freeEvinfo(struct evinfo *einfo) {
   assert(einfo->state != ES_DESTROY);
   einfo->state = ES_DESTROY;
 
@@ -305,6 +305,7 @@ void cleanOne(struct evinfo *einfo) {
     tlog(LL_VERBOSE, "cleaning dirty bytes: %d",
          einfo->bufEndIndex - einfo->bufStartIndex);
   }
+
   if (einfo->type == RDP_IN || einfo->type == RDP_OUT) {
     if (rdpConnSetUserData(einfo->c, NULL) == -1) {
       tlog(LL_DEBUG, "rdpConnSetUserData");
@@ -331,19 +332,31 @@ void cleanOne(struct evinfo *einfo) {
   }
   freeCipher(&einfo->encryptor);
 
-  if (einfo->type == IN || einfo->type == RDP_IN) {
-    assert(einfo->node);
-    listNodeDestroy(evinfolist, einfo->node);
-  }
-
   free(einfo);
 }
 
-void clean(struct evinfo *einfo) {
+void evinfoPairFree(void *val) {
+  struct evinfo *einfo = (struct evinfo *)val;
   if (einfo->ptr != NULL) {
-    cleanOne(einfo->ptr);
+  assert(einfo->ptr->type == OUT || einfo->ptr->type == RDP_OUT);
+    freeEvinfo(einfo->ptr);
   }
-  cleanOne(einfo);
+
+  assert(einfo->type == IN || einfo->type == RDP_IN);
+  freeEvinfo(einfo);
+}
+
+void clean(struct evinfo *einfo) {
+  if (einfo->type == IN || einfo->type == RDP_IN) {
+    assert(einfo->node);
+    listNodeDestroy(evinfolist, einfo->node);
+  } else if (einfo->type == OUT || einfo->type == RDP_OUT) {
+    assert(einfo->ptr);
+    assert(!einfo->node);
+    assert(einfo->ptr->node);
+    listNodeDestroy(evinfolist, einfo->ptr->node);
+  } else {
+  }
 }
 
 static int sendOrRdpWrite(struct evinfo *einfo, void *buf, size_t len,
@@ -736,6 +749,8 @@ static int handleIn(struct evinfo *einfo,
 }
 
 int destroyAll() {
+  tlog(LL_DEBUG, "destroying resources.");
+
   listIteratorDestroy(evinfolistIter);
   listDestroy(evinfolist);
 
@@ -797,6 +812,8 @@ int beforeSleep() {
 void eloop(char *port,
            int (*handleInData)(struct evinfo *, unsigned char *, ssize_t)) {
   evinfolist = listCreate();
+  listMethodSetFree(evinfolist, evinfoPairFree);
+
   evinfolistIter = listIteratorCreate(evinfolist, LIST_START_HEAD);
 
   struct sigaction sa;
