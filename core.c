@@ -8,13 +8,27 @@ int globalLogLevel;
 // User input config.
 char *remoteHost;
 char *remotePort;
+char *remoteUdpPort;
 char *localPort;
+char *localUdpPort;
 char *password;
 
+// Global connection pairs.
 list *evinfolist;
 listIterator *evinfolistIter;
 
-struct evinfo *listenevinfo, *rdpListenevinfo;
+// UDP relay associations storage.
+dict *udpRelayDict;
+dictIterator *udpRelayDictIterator;
+
+struct udpRelayEntry {
+  struct sockaddr_storage addr;
+  socklen_t addrlen;
+  uint64_t lastVisited; // In milliseconds.
+};
+
+struct evinfo *tcpListenEvinfo, *udpListenEvinfo, *udpListenOutEvinfo,
+    *rdpListenEvinfo;
 struct connectPool connPool;
 
 rdpSocket *rdpS;
@@ -50,6 +64,8 @@ static int setnonblocking(int fd) {
     perror("fcntl: setnonblocking, F_SETFL");
     return -1;
   }
+
+  return 0;
 }
 
 static int isLeapYear(time_t year) {
@@ -175,6 +191,27 @@ static int populateKeyIv() {
   return 0;
 }
 
+// Remember to free addrinfo!
+int getaddrinfoWithoutHints(const char *host, const char *service,
+                            struct addrinfo **result) {
+  struct addrinfo hints;
+  int s;
+
+  memset(&hints, 0, sizeof(struct addrinfo));
+  hints.ai_canonname = NULL;
+  hints.ai_addr = NULL;
+  hints.ai_next = NULL;
+  hints.ai_family = AF_UNSPEC;
+
+  s = getaddrinfo(host, service, &hints, result);
+  if (s != 0) {
+    errno = ENOSYS;
+    return -1;
+  }
+
+  return 0;
+}
+
 int inetConnect(const char *host, const char *service, int type) {
   struct addrinfo hints;
   struct addrinfo *result, *rp;
@@ -249,27 +286,26 @@ int inetPassiveSocket(const char *service, int type, socklen_t *addrlen,
     if (sfd == -1)
       continue;
 
-    if (doListen) {
-      if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) ==
-          -1) {
-        close(sfd);
-        freeaddrinfo(result);
-        return -1;
-      }
+    if (doListen && setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &optval,
+                               sizeof(optval)) == -1) {
+      close(sfd);
+      freeaddrinfo(result);
+      return -1;
+    }
 
-      optval = 1;
-      if (setsockopt(sfd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval)) ==
-          -1) {
-        close(sfd);
-        freeaddrinfo(result);
-        return -1;
-      }
+    optval = 1;
+    if (type == SOCK_STREAM && setsockopt(sfd, IPPROTO_TCP, TCP_NODELAY,
+                                          &optval, sizeof(optval)) == -1) {
+      close(sfd);
+      freeaddrinfo(result);
+      return -1;
+    }
 
-      if (setnonblocking(sfd) == -1) {
-        close(sfd);
-        freeaddrinfo(result);
-        return -1;
-      }
+    // todo can set using sock().
+    if (setnonblocking(sfd) == -1) {
+      close(sfd);
+      freeaddrinfo(result);
+      return -1;
     }
 
     if (bind(sfd, rp->ai_addr, rp->ai_addrlen) == 0)
@@ -278,7 +314,7 @@ int inetPassiveSocket(const char *service, int type, socklen_t *addrlen,
     close(sfd);
   }
 
-  if (rp != NULL && doListen) {
+  if (rp != NULL && doListen && type == SOCK_STREAM) {
     if (listen(sfd, backlog) == -1) {
       freeaddrinfo(result);
       return -1;
@@ -293,7 +329,11 @@ int inetPassiveSocket(const char *service, int type, socklen_t *addrlen,
   return (rp == NULL) ? -1 : sfd;
 }
 
-int inetListen(const char *service, int backlog, socklen_t *addrlen) {
+int inetListenUDP(const char *service, int backlog, socklen_t *addrlen) {
+  return inetPassiveSocket(service, SOCK_DGRAM, addrlen, 1, backlog);
+}
+
+int inetListenTCP(const char *service, int backlog, socklen_t *addrlen) {
   return inetPassiveSocket(service, SOCK_STREAM, addrlen, 1, backlog);
 }
 
@@ -335,10 +375,102 @@ void freeEvinfo(struct evinfo *einfo) {
   free(einfo);
 }
 
+// Key is atyp + ipv4 + port = 7 bytes.
+uint64_t udpRelayDictHashFn(const void *key) {
+  return dictHashFnDefault(key, 7);
+}
+
+int udpRelayDictKeyCmp(const void *key1, const void *key2) {
+  return memcmp(key1, key2, 7) == 0;
+}
+
+void udpRelayDictKeyDestroy(void *key) { free(key); }
+
+void udpRelayDictValDestroy(void *val) { free(val); }
+
+int udpRelayDictAddOrUpdate(void *key, struct sockaddr_storage *addr,
+                            socklen_t addrlen) {
+  void *entryKey;
+  struct udpRelayEntry *val;
+
+  entryKey = malloc(sizeof(void *));
+  if (entryKey == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+
+  memcpy(entryKey, key, 7);
+
+  val = malloc(sizeof(struct udpRelayEntry));
+  if (val == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+
+  val->addr = *(struct sockaddr_storage *)addr;
+  val->addrlen = addrlen;
+  val->lastVisited = mstime();
+
+  int n = dictUpdateOrAdd(udpRelayDict, entryKey, val);
+
+  return 0;
+}
+
+int udpRelayDictGetBySockaddr(struct sockaddr *src_addr, socklen_t addrlen,
+                              unsigned char *keybuf,
+                              struct sockaddr_storage **dst_addr,
+                              socklen_t *dst_addrlen) {
+  keybuf[0] = '\x01';
+  memcpy(keybuf + 1, &(((struct sockaddr_in *)src_addr)->sin_addr), 4);
+  memcpy(keybuf + 5, &((struct sockaddr_in *)src_addr)->sin_port, 2);
+
+  dictEntry *entry = dictFind(udpRelayDict, keybuf);
+  if (entry == NULL) {
+    tlog(LL_DEBUG, "dictFind found nothing.");
+    return -1;
+  }
+
+  *dst_addr = &((struct udpRelayEntry *)(entry->val))->addr;
+  *dst_addrlen = ((struct udpRelayEntry *)(entry->val))->addrlen;
+  return 0;
+}
+
+int udpRelayDictGetByKey(void *key, struct sockaddr_storage **dst_addr,
+                         socklen_t *dst_addrlen) {
+  dictEntry *entry = dictFind(udpRelayDict, key);
+  if (entry == NULL) {
+    tlog(LL_DEBUG, "dictFind found nothing.");
+    return -1;
+  }
+
+  *dst_addr = &((struct udpRelayEntry *)(entry->val))->addr;
+  *dst_addrlen = ((struct udpRelayEntry *)(entry->val))->addrlen;
+  return 0;
+}
+
+int udpRelayDictSweepTimeout() {
+  dictIteratorRewind(udpRelayDictIterator);
+
+  dictEntry *entry;
+  unsigned char *key;
+  struct udpRelayEntry *val;
+
+  while (entry = dictIteratorNext(udpRelayDictIterator)) {
+    key = entry->key;
+    val = (struct udpRelayEntry *)entry->val;
+
+    if (mstime() - val->lastVisited > 5 * 60 * 1000) {
+      dictEntryDelete(udpRelayDict, key, 0);
+    }
+  }
+
+  return 0;
+}
+
 void evinfoPairFree(void *val) {
   struct evinfo *einfo = (struct evinfo *)val;
   if (einfo->ptr != NULL) {
-  assert(einfo->ptr->type == OUT || einfo->ptr->type == RDP_OUT);
+    assert(einfo->ptr->type == OUT || einfo->ptr->type == RDP_OUT);
     freeEvinfo(einfo->ptr);
   }
 
@@ -349,11 +481,13 @@ void evinfoPairFree(void *val) {
 void clean(struct evinfo *einfo) {
   if (einfo->type == IN || einfo->type == RDP_IN) {
     assert(einfo->node);
+
     listNodeDestroy(evinfolist, einfo->node);
   } else if (einfo->type == OUT || einfo->type == RDP_OUT) {
     assert(einfo->ptr);
     assert(!einfo->node);
     assert(einfo->ptr->node);
+
     listNodeDestroy(evinfolist, einfo->ptr->node);
   } else {
   }
@@ -474,11 +608,63 @@ int sendOrStore(int self, void *buf, size_t len, int flags,
   return 0;
 }
 
+ssize_t sendUdpIn(struct evinfo *einfo, unsigned char *buf, size_t buflen,
+                  struct sockaddr_storage *destaddr, socklen_t addrlen) {
+  if (serverflag == 1) {
+    int tmpLen;
+
+    // Attach encryptor to the sending side.
+    if (encryptOnce(&einfo->ptr->encryptor, tmpBuf, &tmpLen, buf, buflen, key,
+                    iv) == -1) {
+      perror("encryptOnce");
+      return -1;
+    }
+    buf = tmpBuf;
+    buflen = tmpLen;
+  }
+
+  return sendto(einfo->ptr->fd, buf, buflen, 0, (struct sockaddr *)destaddr,
+                addrlen);
+}
+
+ssize_t sendUdpOut(struct evinfo *einfo, unsigned char *buf, size_t buflen,
+
+                   char *destHost, char *destPort) {
+
+  // Should only called within handleUdpIn.
+  assert(einfo->ptr->type == UDP_LISTEN_OUT);
+
+  struct addrinfo *ainfo;
+  int s = getaddrinfoWithoutHints(destHost, destPort, &ainfo);
+  if (s == -1) {
+    tlog(LL_DEBUG, "getaddrinfoWithoutHints");
+    return -1;
+  }
+
+  if (serverflag == 0) {
+    int tmpLen;
+
+    if (encryptOnce(&einfo->ptr->encryptor, tmpBuf, &tmpLen, buf, buflen, key,
+                    iv) == -1) {
+      perror("encryptOnce");
+      return -1;
+    }
+    buf = tmpBuf;
+    buflen = tmpLen;
+  }
+
+  return sendto(einfo->ptr->fd, buf, buflen, 0, ainfo->ai_addr,
+                ainfo->ai_addrlen);
+}
+
 struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
                     uint32_t events, rdpConn *c) {
   struct evinfo *einfo;
 
-  if ((events & EPOLLET) && (type == IN || type == OUT || type == LISTEN)) {
+  // todo, already nonblock?
+  if ((events & EPOLLET) &&
+      (type == IN || type == OUT || type == PROCURATOR_TCP_LISTEN ||
+       type == UDP_LISTEN_IN || type == UDP_LISTEN_OUT)) {
     if (setnonblocking(fd) == -1) {
       perror("eadd setnonblocking");
       exit(EXIT_FAILURE);
@@ -501,7 +687,8 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
     einfo->c = c;
 
   } else if (type == IN || type == OUT || type == RDP_LISTEN ||
-             type == LISTEN) {
+             type == PROCURATOR_TCP_LISTEN || type == UDP_LISTEN_IN ||
+             type == UDP_LISTEN_OUT) {
     assert(fd != -1);
     einfo->fd = fd;
   } else {
@@ -524,6 +711,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   einfo->encryptor.sentIv = 0;
   einfo->encryptor.receivedIv = 0;
 
+  // Store all connection pairs in a list.
   if (einfo->type == IN || einfo->type == RDP_IN) {
     einfo->node = listNodeAddHead(evinfolist, einfo);
     if (einfo->node == NULL) {
@@ -533,6 +721,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   } else {
   }
 
+  // Every new TCP connection have a new fd to be monitored.
   if (type != RDP_IN && type != RDP_OUT) {
     struct epoll_event ev;
     ev.data.ptr = einfo;
@@ -680,6 +869,8 @@ static int handleOutData(struct evinfo *einfo, unsigned char *buf,
 static int decryptIfNeed(struct evinfo *einfo, void **dst, int *dstLen,
                          void *src, int srcLen) {
   if (einfo->type == RDP_IN || einfo->type == RDP_OUT) {
+    int tmplen;
+
     if (decrypt(&einfo->encryptor, *dst, dstLen, src, srcLen, key, iv) == -1) {
       tlog(LL_DEBUG, "encrypt, handleIn");
       return -1;
@@ -748,17 +939,75 @@ static int handleIn(struct evinfo *einfo,
   return 0;
 }
 
+int processUdp(struct evinfo *einfo,
+               int (*handleUdp)(struct evinfo *einfo, unsigned char *, ssize_t,
+                                struct sockaddr *, socklen_t)) {
+  ssize_t numRead;
+
+  // todo performance.
+  struct sockaddr_storage src_addr;
+  socklen_t addrlen = sizeof(src_addr);
+
+  numRead = recvfrom(einfo->fd, buf, BUF_SIZE, 0, (struct sockaddr *)&src_addr,
+                     &addrlen);
+  if (numRead == -1) {
+    tlog(LL_DEBUG, "udp recvfrom error");
+    return -1;
+  } else if (numRead == 0) {
+    tlog(LL_DEBUG, "recvfrom read 0 bytes");
+    // Just discard.
+    return 0;
+  }
+
+  unsigned char *plainbuf = buf;
+  size_t plainNumRead = numRead;
+
+  if ((serverflag == 0 && einfo->type == UDP_LISTEN_OUT) ||
+      (serverflag == 1 && einfo->type == UDP_LISTEN_IN)) {
+    int tmplen;
+
+    if (decryptOnce(&einfo->encryptor, tmpBuf, &tmplen, buf, numRead, key,
+                    iv) == -1) {
+      tlog(LL_DEBUG, "encrypt, handleIn");
+      return -1;
+    }
+    if (tmplen > TMP_BUF_SIZE) {
+      tlog(LL_DEBUG, "recv, handleIn, tmpLen > TMP_BUF_SIZE");
+      exit(EXIT_FAILURE);
+    }
+
+    plainbuf = tmpBuf;
+    plainNumRead = tmplen;
+  }
+
+  if (handleUdp(einfo, plainbuf, plainNumRead, (struct sockaddr *)&src_addr,
+                addrlen) == -1) {
+    tlog(LL_DEBUG, "handleUdp error");
+    return -1;
+  }
+  return 0;
+}
+
 int destroyAll() {
   tlog(LL_DEBUG, "destroying resources.");
 
   listIteratorDestroy(evinfolistIter);
   listDestroy(evinfolist);
 
-  close(listenevinfo->fd);
-  free(listenevinfo);
+  dictDestroy(udpRelayDict);
+
+  if (serverflag == 0) {
+    close(tcpListenEvinfo->fd);
+    free(tcpListenEvinfo);
+  }
+  close(udpListenEvinfo->fd);
+  free(udpListenEvinfo);
+
+  close(udpListenOutEvinfo->fd);
+  free(udpListenOutEvinfo);
 
   rdpSocketDestroy(rdpS);
-  free(rdpListenevinfo);
+  free(rdpListenEvinfo);
 
   exit(EXIT_SUCCESS);
 }
@@ -809,16 +1058,25 @@ int beforeSleep() {
   return timeout;
 }
 
-void eloop(char *port,
-           int (*handleInData)(struct evinfo *, unsigned char *, ssize_t)) {
+void eloop(char *port, char *udpPort,
+           int (*handleInData)(struct evinfo *, unsigned char *, ssize_t),
+           int (*handleUdpIn)(struct evinfo *, unsigned char *, ssize_t,
+                              struct sockaddr *, socklen_t),
+           int (*handleUdpOut)(struct evinfo *, unsigned char *, ssize_t,
+                               struct sockaddr *, socklen_t)) {
   evinfolist = listCreate();
   listMethodSetFree(evinfolist, evinfoPairFree);
-
   evinfolistIter = listIteratorCreate(evinfolist, LIST_START_HEAD);
+
+  dictType rdpConnDictType = {
+      udpRelayDictHashFn,     udpRelayDictKeyCmp,    NULL, NULL,
+      udpRelayDictKeyDestroy, udpRelayDictValDestroy};
+  udpRelayDict = dictCreate(&rdpConnDictType);
+  udpRelayDictIterator = dictIteratorCreate(udpRelayDict);
 
   struct sigaction sa;
   ssize_t numRead;
-  int nfds, listenfd, infd;
+  int nfds, listenTCPfd, listenUDPfd, listenUDPOutfd, infd;
   struct evinfo *einfo;
   enum evtype etype;
   struct epoll_event ev, evlist[MAX_EVENTS];
@@ -843,6 +1101,13 @@ void eloop(char *port,
 
   populateKeyIv();
 
+  efd = epoll_create1(0);
+  if (efd == -1) {
+    perror("epoll_create1");
+    exit(EXIT_FAILURE);
+  }
+
+  // Local and Server are connected via rdp protocol.
   rdpS = rdpSocketCreate(1, "0.0.0.0", port);
   if (rdpS == NULL) {
     tlog(LL_DEBUG, "rdpSocketCreate");
@@ -854,22 +1119,45 @@ void eloop(char *port,
     exit(EXIT_FAILURE);
   }
 
-  listenfd = inetListen(port, 80, NULL);
-  if (listenfd == -1) {
-    perror("inetListen");
-    exit(EXIT_FAILURE);
-  }
-
-  efd = epoll_create1(0);
-  if (efd == -1) {
-    perror("epoll_create1");
-    exit(EXIT_FAILURE);
-  }
-
-  rdpListenevinfo =
+  rdpListenEvinfo =
       eadd(RDP_LISTEN, rdpfd, -1, NULL, EPOLLIN | EPOLLOUT | EPOLLET, NULL);
 
-  listenevinfo = eadd(LISTEN, listenfd, -1, NULL, EPOLLIN, NULL);
+  // TCP listen port is for socks application client only.
+  if (serverflag == 0) {
+    listenTCPfd = inetListenTCP(port, 80, NULL);
+    if (listenTCPfd == -1) {
+      perror("inetListenTCP");
+      exit(EXIT_FAILURE);
+    }
+
+    // todo epollet?
+    tcpListenEvinfo =
+        eadd(PROCURATOR_TCP_LISTEN, listenTCPfd, -1, NULL, EPOLLIN, NULL);
+  }
+
+  // UDP relay server.
+  listenUDPfd = inetListenUDP(udpPort, 80, NULL);
+  if (listenUDPfd == -1) {
+    perror("inetListenUDP");
+    exit(EXIT_FAILURE);
+  }
+
+  udpListenEvinfo = eadd(UDP_LISTEN_IN, listenUDPfd, -1, NULL,
+                         EPOLLIN | EPOLLOUT | EPOLLET, NULL);
+
+  // Udp out connect port.
+  char outUdpPort[5];
+  snprintf(outUdpPort, 5, "%d", atoi(udpPort) + 1);
+  listenUDPOutfd = inetListenUDP(outUdpPort, 80, NULL);
+  if (listenUDPOutfd == -1) {
+    perror("inetListenUDPOut");
+    exit(EXIT_FAILURE);
+  }
+  udpListenOutEvinfo = eadd(UDP_LISTEN_OUT, listenUDPOutfd, -1, NULL,
+                            EPOLLIN | EPOLLOUT | EPOLLET, NULL);
+
+  udpListenEvinfo->ptr = udpListenOutEvinfo;
+  udpListenOutEvinfo->ptr = udpListenEvinfo;
 
   if (0 && serverflag == 0) {
     int i, fd;
@@ -954,13 +1242,15 @@ void eloop(char *port,
           }
         } else if (etype == RDP_LISTEN) {
           // Resend is triggered by rdpReadPoll() return flag.
+        } else if (etype == UDP_LISTEN_IN) {
+        } else if (etype == UDP_LISTEN_OUT) {
         } else {
           tlog(LL_DEBUG, "wrong etype in EPOLLOUT, etype: %d\n", etype);
           exit(EXIT_FAILURE);
         }
       }
       if (evlist[n].events & EPOLLIN) {
-        if (etype == LISTEN) {
+        if (etype == PROCURATOR_TCP_LISTEN) {
           for (;;) {
             infd = accept(einfo->fd, NULL, NULL);
             if (infd == -1) {
@@ -1073,6 +1363,16 @@ void eloop(char *port,
             if (flag & RDP_CONTINUE) {
               continue;
             }
+          }
+        } else if (etype == UDP_LISTEN_IN) {
+          if (processUdp(einfo, handleUdpIn) == -1) {
+            tlog(LL_DEBUG, "processUdp in error");
+            continue;
+          }
+        } else if (etype == UDP_LISTEN_OUT) {
+          if (processUdp(einfo, handleUdpOut) == -1) {
+            tlog(LL_DEBUG, "processUdp out error");
+            continue;
           }
         } else {
           tlog(LL_DEBUG, "wrong etype in EPOLLIN");

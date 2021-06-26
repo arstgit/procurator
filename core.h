@@ -25,6 +25,7 @@
 
 #include "crypto.h"
 
+#include "librdp/libdict/dict.h"
 #include "liblist/list.h"
 #include "librdp/rdp.h"
 
@@ -59,10 +60,22 @@
 
 extern char *remoteHost;
 extern char *remotePort;
+// todo duplicated?
+extern char *remoteUdpPort;
 extern char *localPort;
+extern char *localUdpPort;
 extern char *password;
 
-enum evtype { LISTEN, IN, OUT, RDP_IN, RDP_OUT, RDP_LISTEN };
+enum evtype {
+  UDP_LISTEN_IN,
+  UDP_LISTEN_OUT,
+  PROCURATOR_TCP_LISTEN,
+  IN,
+  OUT,
+  RDP_IN,
+  RDP_OUT,
+  RDP_LISTEN
+};
 enum evstate { ES_IDLE, ES_DESTROY };
 
 struct evinfo {
@@ -94,15 +107,39 @@ void clean(struct evinfo *einfo);
 int sendOrStore(int self, void *buf, size_t len, int flags,
                 struct evinfo *einfo);
 
+ssize_t sendUdpIn(struct evinfo *einfo, unsigned char *buf, size_t buflen,
+                  struct sockaddr_storage *addr, socklen_t addrlen);
+
+ssize_t sendUdpOut(struct evinfo *einfo, unsigned char *buf, size_t buflen,
+                   char *host, char *port);
+
 struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
                     uint32_t events, rdpConn *c);
 int connOut(struct evinfo *, char *, char *);
 
-void eloop(char *port,
-           int (*handleIn)(struct evinfo *, unsigned char *, ssize_t));
+void eloop(char *port, char *udpPort,
+           int (*handleInData)(struct evinfo *, unsigned char *, ssize_t),
+           int (*handleUdpIn)(struct evinfo *, unsigned char *, ssize_t,
+                              struct sockaddr *, socklen_t),
+           int (*handleUdpOut)(struct evinfo *, unsigned char *, ssize_t,
+                               struct sockaddr *, socklen_t));
+
+int getaddrinfoWithoutHints(const char *host, const char *service,
+                            struct addrinfo **result);
 
 int inetConnect(const char *host, const char *service, int type);
 
 int inetListen(const char *service, int backlog, socklen_t *addrlen);
+
+int udpRelayDictAddOrUpdate(void *key, struct sockaddr_storage *addr,
+                            socklen_t addrlen);
+
+int udpRelayDictGetBySockaddr(struct sockaddr *src_addr, socklen_t addrlen,
+                              unsigned char *keybuf,
+                              struct sockaddr_storage **dst_addr,
+                              socklen_t *dst_addrlen);
+
+int udpRelayDictGetByKey(void *key, struct sockaddr_storage **dst_addr,
+                         socklen_t *dst_addrlen);
 
 #endif

@@ -8,3 +8,4 @@ procurator-server
 curltest
 
 .vscode
+.ccls-cache

@@ -4,3 +4,6 @@
 [submodule "librdp"]
 	path = librdp
 	url = https://github.com/derekchuank/librdp
+[submodule "libdict"]
+	path = libdict
+	url = git@github.com:derekchuank/libdict
