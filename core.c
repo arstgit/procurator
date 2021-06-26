@@ -459,7 +459,7 @@ int udpRelayDictSweepTimeout() {
     key = entry->key;
     val = (struct udpRelayEntry *)entry->val;
 
-    if (mstime() - val->lastVisited > 5 * 60 * 1000) {
+    if (mstime() - val->lastVisited > 30 * 1000) {
       dictEntryDelete(udpRelayDict, key, 0);
     }
   }
@@ -1000,11 +1000,13 @@ int destroyAll() {
   listDestroy(evinfolist);
 
   dictDestroy(udpRelayDict);
+  dictIteratorDestroy(udpRelayDictIterator);
 
   if (serverflag == 0) {
     close(tcpListenEvinfo->fd);
     free(tcpListenEvinfo);
   }
+
   close(udpListenEvinfo->fd);
   free(udpListenEvinfo);
 
@@ -1028,6 +1030,10 @@ int afterSleep() {
 }
 
 int beforeSleep() {
+  if (nowms - lastCheckms >= CHECK_TIMEOUT_INTERVAL) {
+    udpRelayDictSweepTimeout();
+  }
+
   if (nowms - lastCheckms >= CHECK_TIMEOUT_INTERVAL) {
     listNode *node;
     int activecnt = 0;
