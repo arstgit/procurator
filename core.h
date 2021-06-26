@@ -25,8 +25,8 @@
 
 #include "crypto.h"
 
-#include "librdp/libdict/dict.h"
 #include "liblist/list.h"
+#include "librdp/libdict/dict.h"
 #include "librdp/rdp.h"
 
 // Log levels.

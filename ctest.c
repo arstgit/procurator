@@ -126,8 +126,7 @@ int main(int argc, char *argv[]) {
                       "--socks5-hostname",
                       "127.0.0.1:8080",
                       (char *)NULL};
-  // todo run it.
-  // childCommnadTest("curl proxy", "curl", curlArgs);
+  childCommnadTest("curl proxy", "curl", curlArgs);
 
   // Clean, kill local and server.
   kill(spid, SIGHUP);

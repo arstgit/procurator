@@ -17,7 +17,7 @@ all: procurator-local procurator-server
 librdp/librdp.a: librdp/rdp.h librdp/rdp.c
 	cd librdp && make BUILD=$(BUILD)
 
-curltest.o: curltest.c
+ctest.o: ctest.c
 	$(CC) -c -o $@ $<
 
 procurator-local: local.o core.o crypto.o librdp/librdp.a liblist/list.o
@@ -26,12 +26,12 @@ procurator-local: local.o core.o crypto.o librdp/librdp.a liblist/list.o
 procurator-server: server.o core.o crypto.o librdp/librdp.a liblist/list.o
 	$(CC) -o $@ $^ -lcrypto
 
-curltest: curltest.o
+ctest: ctest.o
 	$(CC) -o $@ $^
 
 .PHONY: test
-test: clean curltest procurator-local procurator-server
-	./curltest
+test: clean ctest procurator-local procurator-server
+	./ctest
 
 .PHONY: pretty
 pretty:
@@ -47,5 +47,5 @@ install:
 
 .PHONY: clean
 clean:
-	rm -f *.o **/*.o procurator-local procurator-server curltest
+	rm -f *.o **/*.o procurator-local procurator-server ctest
 	cd librdp/ && make clean
