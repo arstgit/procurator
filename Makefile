@@ -1,6 +1,6 @@
 CC=gcc
 
-DEPS = core.h librdp/rdp.h liblist/list.h libdict/dict.h
+DEPS = core.h librdp/rdp.h liblist/list.h
 BUILD = release
 CFLAGS_release = 
 CFLAGS_debug = -g -O0
