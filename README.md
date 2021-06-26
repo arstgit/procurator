@@ -4,7 +4,7 @@
 
 ## Super simple to use
 
-Socks5 proxy client and server.
+Socks5 proxy client and server. UDP relay support. More aggressive packet sending strategy, using `librdp`.
 
 ## Design
 
@@ -27,14 +27,23 @@ Libraries:
 
 ## Usage
 
-On your local machine, run command:
+On your local machine, run:
 ```
-  $ procurator-local --remote-host 127.0.0.1 --remote-port 8080 --local-port 1080 --password foobar
+  $ procurator-local --remote-host 127.0.0.1 \
+      --remote-port 8080 \
+      --remote-udp-port 8081 \
+      --local-port 1080 \
+      --local-udp-port 1081 \
+      --password foobar \
+      --udp-target-host 8.8.8.8 \
+      --udp-target-port 53
 ```
 
-On remote machine, run command:
+- `--udp-target-host` and `--udp-target-port` aren't required, if you are not planning to establish a direct(no socks5 involved) udp port relay, usually for DNS forwarding.
+
+On remote machine, run:
 ```
-  $ procurator-server --remote-port 8080 --password foobar
+  $ procurator-server --remote-port 8080 --remote-udp-port 8081 --password foobar
 ```
 
 ## Test
