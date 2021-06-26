@@ -393,7 +393,7 @@ int udpRelayDictAddOrUpdate(void *key, struct sockaddr_storage *addr,
   void *entryKey;
   struct udpRelayEntry *val;
 
-  entryKey = malloc(sizeof(void *));
+  entryKey = malloc(7);
   if (entryKey == NULL) {
     perror("malloc");
     exit(EXIT_FAILURE);
