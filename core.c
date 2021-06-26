@@ -635,8 +635,9 @@ ssize_t sendUdpOut(struct evinfo *einfo, unsigned char *buf, size_t buflen,
   assert(einfo->ptr->type == UDP_LISTEN_OUT);
 
   struct addrinfo *ainfo;
-  int s = getaddrinfoWithoutHints(destHost, destPort, &ainfo);
-  if (s == -1) {
+  ssize_t numSend;
+
+  if (getaddrinfoWithoutHints(destHost, destPort, &ainfo) == -1) {
     tlog(LL_DEBUG, "getaddrinfoWithoutHints");
     return -1;
   }
@@ -653,8 +654,12 @@ ssize_t sendUdpOut(struct evinfo *einfo, unsigned char *buf, size_t buflen,
     buflen = tmpLen;
   }
 
-  return sendto(einfo->ptr->fd, buf, buflen, 0, ainfo->ai_addr,
-                ainfo->ai_addrlen);
+  numSend =
+      sendto(einfo->ptr->fd, buf, buflen, 0, ainfo->ai_addr, ainfo->ai_addrlen);
+
+  freeaddrinfo(ainfo);
+
+  return numSend;
 }
 
 struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,

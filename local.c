@@ -3,10 +3,14 @@
 extern int serverflag;
 extern int globalLogLevel;
 
+static char *udpTargetHost;
+static char *udpTargetPort;
+static unsigned char udpTargetHeader[255];
+
 static char reqAddr[259];
 static char udpAssociateReply[10] = "\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00";
 
-static char udpbuf[1600];
+static unsigned char udpbuf[1600];
 
 static int handleInData(struct evinfo *einfo, unsigned char *buf,
                         ssize_t numRead) {
@@ -97,10 +101,12 @@ static void usage(void) {
   fprintf(stderr, "Usage: procurator-local [options]\n");
   fprintf(stderr, "       procurator-local --help\n");
   fprintf(stderr, "Examples:\n");
-  fprintf(stderr, "       procurator-local --remote-host 127.0.0.1 "
-                  "--remote-port 8080 --remote-udp-port 8081 --local-port 1080 "
-                  "--local-udp-port 1081 "
-                  "--password foobar\n");
+  fprintf(
+      stderr,
+      "       procurator-local --remote-host 127.0.0.1 "
+      "--remote-port 8080 --remote-udp-port 8081 --local-port 1080 "
+      "--local-udp-port 1081 "
+      "--password foobar --udp-target-host 127.0.0.1 --udp-target-port 53\n");
   exit(1);
 }
 
@@ -113,6 +119,14 @@ static void usage(void) {
 //
 int handleUdpIn(struct evinfo *einfo, unsigned char *buf, ssize_t buflen,
                 struct sockaddr *src_addr, socklen_t addrlen) {
+  if (udpTargetHost != NULL && udpTargetPort != NULL) {
+    memcpy(udpbuf, udpTargetHeader, 10);
+    memcpy(udpbuf + 10, buf, buflen);
+
+    buf = (unsigned char *)udpbuf;
+    buflen = buflen + 10;
+  }
+
   if (buflen < 8) {
     tlog(LL_DEBUG, "buflen less than 8");
     return -1;
@@ -169,8 +183,15 @@ int handleUdpOut(struct evinfo *einfo, unsigned char *buf, ssize_t buflen,
 
   memcpy(udpbuf, "\x00\x00\x00", 3);
   memcpy(udpbuf + 3, buf, buflen);
+  buf = (unsigned char *)udpbuf;
+  buflen = buflen + 3;
 
-  ssize_t numSend = sendUdpIn(einfo, udpbuf, buflen + 3, dst_addr, dst_addrlen);
+  if (udpTargetHost != NULL && udpTargetPort != NULL) {
+    buf = buf + 10;
+    buflen = buflen - 10;
+  }
+
+  ssize_t numSend = sendUdpIn(einfo, buf, buflen, dst_addr, dst_addrlen);
   if (numSend == -1) {
     tlog(LL_DEBUG, "sendUdpIn error");
     return -1;
@@ -219,6 +240,16 @@ int main(int argc, char **argv) {
       continue;
     }
 
+    if (!strcmp(argv[i], "--udp-target-host")) {
+      udpTargetHost = argv[++i];
+      continue;
+    }
+
+    if (!strcmp(argv[i], "--udp-target-port")) {
+      udpTargetPort = argv[++i];
+      continue;
+    }
+
     if (!strcmp(argv[i], "--log-level")) {
       if (!strcmp(argv[++i], "LL_DEBUG")) {
         globalLogLevel = LL_DEBUG;
@@ -240,6 +271,23 @@ int main(int argc, char **argv) {
   inet_aton("127.0.0.1", (struct in_addr *)(udpAssociateReply + 4));
   snprintf(udpAssociateReply + 8, 2, "%hu",
            htons((uint16_t)atoi(localUdpPort)));
+
+  // Populate udpTargetHeader if needed.
+  // todo delete assert.
+  assert(udpTargetHeader[0] == '\x00');
+  if (udpTargetHost != NULL && udpTargetPort != NULL) {
+    struct addrinfo *ainfo;
+    if (getaddrinfoWithoutHints(udpTargetHost, udpTargetPort, &ainfo) == -1) {
+      tlog(LL_DEBUG, "getaddrinfoWithoutHints error");
+      return -1;
+    }
+
+    memcpy(udpTargetHeader, "\x00\x00\x00\x01", 4);
+    memcpy(udpTargetHeader + 4,
+           &((struct sockaddr_in *)ainfo->ai_addr)->sin_addr, 4);
+    memcpy(udpTargetHeader + 8,
+           &((struct sockaddr_in *)ainfo->ai_addr)->sin_port, 2);
+  }
 
   eloop(localPort, localUdpPort, handleInData, handleUdpIn, handleUdpOut);
 }
