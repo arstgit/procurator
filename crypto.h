@@ -22,4 +22,10 @@ int encrypt(struct encryptor *, unsigned char *, int *, unsigned char *, int,
 int decrypt(struct encryptor *, unsigned char *, int *, unsigned char *, int,
             unsigned char *, unsigned char *);
 
+int encryptOnce(struct encryptor *, unsigned char *, int *, unsigned char *,
+                int, unsigned char *, unsigned char *);
+
+int decryptOnce(struct encryptor *, unsigned char *, int *, unsigned char *,
+                int, unsigned char *, unsigned char *);
+
 #endif

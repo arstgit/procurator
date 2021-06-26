@@ -4,6 +4,9 @@ extern int serverflag;
 extern int globalLogLevel;
 
 static char reqAddr[259];
+static char udpAssociateReply[10] = "\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00";
+
+static char udpbuf[1600];
 
 static int handleInData(struct evinfo *einfo, unsigned char *buf,
                         ssize_t numRead) {
@@ -70,8 +73,12 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
       return -1;
     } else if (cmd == '\x03') {
       // UDP ASSOCIATE
-      tlog(LL_DEBUG, "Not implemented cmd 03");
-      return -1;
+      tlog(LL_DEBUG, "Got a udp associate request, cmd 03");
+
+      if (sendOrStore(1, udpAssociateReply, 10, 0, einfo) == -1) {
+        tlog(LL_DEBUG, "sendOrStore, stage1, write to infd, cmd 03");
+        return -1;
+      }
     } else {
       return -1;
     }
@@ -91,8 +98,85 @@ static void usage(void) {
   fprintf(stderr, "       procurator-local --help\n");
   fprintf(stderr, "Examples:\n");
   fprintf(stderr, "       procurator-local --remote-host 127.0.0.1 "
-                  "--remote-port 8080 --local-port 1080 --password foobar\n");
+                  "--remote-port 8080 --remote-udp-port 8081 --local-port 1080 "
+                  "--local-udp-port 1081 "
+                  "--password foobar\n");
   exit(1);
+}
+
+// UDP packets format received from clients.
+//   +----+------+------+----------+----------+----------+
+//   |RSV | FRAG | ATYP | DST.ADDR | DST.PORT |   DATA   |
+//   +----+------+------+----------+----------+----------+
+//   | 2  |  1   |  1   | Variable |    2     | Variable |
+//   +----+------+------+----------+----------+----------+
+//
+int handleUdpIn(struct evinfo *einfo, unsigned char *buf, ssize_t buflen,
+                struct sockaddr *src_addr, socklen_t addrlen) {
+  if (buflen < 8) {
+    tlog(LL_DEBUG, "buflen less than 8");
+    return -1;
+  }
+
+  char fragmentFlag = buf[2];
+  if (fragmentFlag != '\x00') {
+    tlog(LL_DEBUG, "fragmentFlag not 0");
+    return -1;
+  }
+
+  char atyp = buf[3];
+  if (atyp == '\x01') {
+    // IP V4 addreseinfos
+    memcpy(reqAddr, buf + 3, 7);
+  } else if (atyp == '\x03') {
+    // DOMAINNAME
+    tlog(LL_DEBUG, "wrong atyp \x03");
+    return -1;
+  } else if (atyp == '\x04') {
+    // IP V6 address
+    tlog(LL_DEBUG, "wrong atyp \x04");
+    return -1;
+  } else {
+    tlog(LL_DEBUG, "Not implemented atype");
+    return -1;
+  }
+
+  int numSend;
+  numSend = sendUdpOut(einfo, buf + 3, buflen - 3, remoteHost, remoteUdpPort);
+  if (numSend == -1) {
+    tlog(LL_DEBUG, "sendUdp error out");
+    return -1;
+  }
+
+  if (udpRelayDictAddOrUpdate(buf + 3, (struct sockaddr_storage *)src_addr,
+                              addrlen) == -1) {
+    tlog(LL_DEBUG, "udpRelayAdd error");
+    exit(EXIT_FAILURE);
+  }
+
+  return 0;
+}
+
+int handleUdpOut(struct evinfo *einfo, unsigned char *buf, ssize_t buflen,
+                 struct sockaddr *src_addr, socklen_t addrlen) {
+  struct sockaddr_storage *dst_addr;
+  socklen_t dst_addrlen;
+
+  if (udpRelayDictGetByKey(buf, &dst_addr, &dst_addrlen) == -1) {
+    tlog(LL_DEBUG, "udpRelayDictGetByKey return nothing");
+    return -1;
+  }
+
+  memcpy(udpbuf, "\x00\x00\x00", 3);
+  memcpy(udpbuf + 3, buf, buflen);
+
+  ssize_t numSend = sendUdpIn(einfo, udpbuf, buflen + 3, dst_addr, dst_addrlen);
+  if (numSend == -1) {
+    tlog(LL_DEBUG, "sendUdpIn error");
+    return -1;
+  }
+
+  return 0;
 }
 
 int main(int argc, char **argv) {
@@ -109,12 +193,24 @@ int main(int argc, char **argv) {
       remoteHost = argv[++i];
       continue;
     }
+
     if (!strcmp(argv[i], "--remote-port")) {
       remotePort = argv[++i];
       continue;
     }
+
+    if (!strcmp(argv[i], "--remote-udp-port")) {
+      remoteUdpPort = argv[++i];
+      continue;
+    }
+
     if (!strcmp(argv[i], "--local-port")) {
       localPort = argv[++i];
+      continue;
+    }
+
+    if (!strcmp(argv[i], "--local-udp-port")) {
+      localUdpPort = argv[++i];
       continue;
     }
 
@@ -134,9 +230,16 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (remoteHost == NULL || remotePort == NULL || localPort == NULL ||
-      password == NULL)
+  // Return the listening udp address and port to client.
+  // Addresse is 127.0.0.1 for now.
+  if (remoteHost == NULL || remotePort == NULL || remoteUdpPort == NULL ||
+      localPort == NULL || localUdpPort == NULL || password == NULL)
     usage();
 
-  eloop(localPort, handleInData);
+  // Populate udp assiciate message string.
+  inet_aton("127.0.0.1", (struct in_addr *)(udpAssociateReply + 4));
+  snprintf(udpAssociateReply + 8, 2, "%hu",
+           htons((uint16_t)atoi(localUdpPort)));
+
+  eloop(localPort, localUdpPort, handleInData, handleUdpIn, handleUdpOut);
 }

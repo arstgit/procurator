@@ -4,6 +4,7 @@ extern int serverflag;
 extern int globalLogLevel;
 
 static char outhost[256], outport[6];
+static char udpbuf[1600];
 
 static int handleInData(struct evinfo *einfo, unsigned char *buf,
                         ssize_t numRead) {
@@ -75,12 +76,78 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
   return 0;
 }
 
+int handleUdpIn(struct evinfo *einfo, unsigned char *buf, ssize_t buflen,
+                struct sockaddr *src_addr, socklen_t addrlen) {
+  char *ipv4;
+  int headerlen;
+
+  unsigned char atyp = buf[0];
+  if (atyp == '\x01') {
+    // IP V4 address
+    ipv4 = inet_ntoa(*(struct in_addr *)(buf + 1));
+
+    memcpy(outhost, ipv4, strlen(ipv4) + 1);
+    snprintf(outport, 6, "%hu", ntohs(*(uint16_t *)(buf + 5)));
+    headerlen = 7;
+  } else if (atyp == '\x03') {
+    // DOMAINNAME address.
+    tlog(LL_DEBUG, "Not implemented domainname, udp");
+    return -1;
+  } else if (atyp == '\x04') {
+    // IP V6 address
+    tlog(LL_DEBUG, "Not implemented ipv6, udp");
+    return -1;
+  } else {
+    tlog(LL_DEBUG, "Wrong atype, udp");
+    return -1;
+  }
+
+  ssize_t numSend =
+      sendUdpOut(einfo, buf + headerlen, buflen - headerlen, outhost, outport);
+  if (numSend == -1) {
+    tlog(LL_DEBUG, "sendUdp error");
+    return -1;
+  }
+
+  if (udpRelayDictAddOrUpdate(buf, (struct sockaddr_storage *)src_addr,
+                              addrlen) == -1) {
+    tlog(LL_DEBUG, "udpRelayAdd error");
+    exit(EXIT_FAILURE);
+  }
+
+  return 0;
+}
+
+int handleUdpOut(struct evinfo *einfo, unsigned char *buf, ssize_t buflen,
+                 struct sockaddr *src_addr, socklen_t addrlen) {
+  struct sockaddr_storage *dst_addr;
+  socklen_t dst_addrlen;
+
+  // After this, udpbuf already contain the header to be needed.
+  if (udpRelayDictGetBySockaddr(src_addr, addrlen, udpbuf, &dst_addr,
+                                &dst_addrlen) == -1) {
+
+    tlog(LL_DEBUG, "udpRelayDictGetBySockaddr return nothing");
+    return -1;
+  }
+
+  memcpy(udpbuf + 7, buf, buflen);
+
+  ssize_t numSend = sendUdpIn(einfo, udpbuf, buflen + 7, dst_addr, dst_addrlen);
+  if (numSend == -1) {
+    tlog(LL_DEBUG, "sendUdpIn error");
+    return -1;
+  }
+
+  return 0;
+}
+
 static void usage(void) {
   fprintf(stderr, "Usage: procurator-server [options]\n");
   fprintf(stderr, "       procurator-server --help\n");
   fprintf(stderr, "Examples:\n");
-  fprintf(stderr,
-          "       procurator-server --remote-port 8080 --password foobar\n");
+  fprintf(stderr, "       procurator-server --remote-port 8080 "
+                  "--remote-udp-port 8081 --password foobar\n");
   exit(1);
 }
 
@@ -96,6 +163,11 @@ int main(int argc, char **argv) {
 
     if (!strcmp(argv[i], "--remote-port")) {
       remotePort = argv[++i];
+      continue;
+    }
+
+    if (!strcmp(argv[i], "--remote-udp-port")) {
+      remoteUdpPort = argv[++i];
       continue;
     }
 
@@ -115,8 +187,8 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (remotePort == NULL || password == NULL)
+  if (remotePort == NULL || password == NULL || remoteUdpPort == NULL)
     usage();
 
-  eloop(remotePort, handleInData);
+  eloop(remotePort, remoteUdpPort, handleInData, handleUdpIn, handleUdpOut);
 }

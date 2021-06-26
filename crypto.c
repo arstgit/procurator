@@ -25,8 +25,8 @@ static int _encrypt(void *ctx, unsigned char *desttext, int *desttext_len,
                     int encryptFlag) {
   // Uncomment this to cancel encrypt/decrypt, for debug purpose.
   //*desttext_len = sourcetext_len;
-  //memcpy(desttext, sourcetext, sourcetext_len);
-  //return 0;
+  // memcpy(desttext, sourcetext, sourcetext_len);
+  // return 0;
 
   if (1 != (encryptFlag == 1 ? EVP_EncryptUpdate : EVP_DecryptUpdate)(
                (EVP_CIPHER_CTX *)ctx, desttext, desttext_len, sourcetext,
@@ -84,4 +84,28 @@ int decrypt(struct encryptor *encryptor, unsigned char *desttext,
     return _encrypt(encryptor->decryptCtx, desttext, desttext_len, sourcetext,
                     sourcetext_len, 0);
   }
+}
+
+int encryptOnce(struct encryptor *encryptor, unsigned char *desttext,
+                int *desttext_len, unsigned char *sourcetext,
+                int sourcetext_len, unsigned char *key, unsigned char *iv) {
+  encryptor->sentIv = 0;
+
+  EVP_CIPHER_CTX_free(encryptor->encryptCtx);
+  encryptor->encryptCtx = NULL;
+
+  return encrypt(encryptor, desttext, desttext_len, sourcetext, sourcetext_len,
+                 key, iv);
+}
+
+int decryptOnce(struct encryptor *encryptor, unsigned char *desttext,
+                int *desttext_len, unsigned char *sourcetext,
+                int sourcetext_len, unsigned char *key, unsigned char *iv) {
+  encryptor->receivedIv = 0;
+
+  EVP_CIPHER_CTX_free(encryptor->decryptCtx);
+  encryptor->decryptCtx = NULL;
+
+  return decrypt(encryptor, desttext, desttext_len, sourcetext, sourcetext_len,
+                 key, iv);
 }
