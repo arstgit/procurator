@@ -41,23 +41,19 @@
 // Default maximum length of log messages.
 #define LOG_MAX_LEN 1024
 
-#define TCPKEEPALIVE 1;
-#define TCPKEEPIDLE 2;
-#define TCPKEEPINTVL 2;
-#define TCPKEEPCNT 5;
-
 #define BUF_SIZE (212992 * 16)
 #define TMP_BUF_SIZE BUF_SIZE
 #define MAX_EVENTS 20
 #define BUF_FACTOR1 1
 #define BUF_FACTOR2 16
-#define CONNECT_POOL_SIZE 8
+#define CONNECT_POOL_SIZE 2
 
 #define CHECK_TIMEOUT_INTERVAL 5 * 1000
 
 // A connection is allowed idle MAX_IDLE_TIME seconds at most.
 #define MAX_IDLE_TIME 10 * 60 * 1000
 
+extern char *version;
 extern char *remoteHost;
 extern char *remotePort;
 // todo duplicated?
@@ -96,7 +92,7 @@ struct evinfo {
 };
 
 struct connectPool {
-  int fds[CONNECT_POOL_SIZE];
+  struct evinfo *einfos[CONNECT_POOL_SIZE];
   int next;
 };
 

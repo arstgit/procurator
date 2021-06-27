@@ -98,6 +98,7 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
 }
 
 static void usage(void) {
+  fprintf(stderr, "Version: %s\n", version);
   fprintf(stderr, "Usage: procurator-local [options]\n");
   fprintf(stderr, "       procurator-local --help\n");
   fprintf(stderr, "Examples:\n");

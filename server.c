@@ -48,7 +48,7 @@ static int handleInData(struct evinfo *einfo, unsigned char *buf,
       return -1;
     }
 
-    tlog(LL_DEBUG, "Connecting to: %s", outhost);
+    tlog(LL_DEBUG, "connecting: %s", outhost);
 
     if (connOut(einfo, outhost, outport) == -1) {
       tlog(LL_DEBUG, "connOut error");
@@ -143,6 +143,7 @@ int handleUdpOut(struct evinfo *einfo, unsigned char *buf, ssize_t buflen,
 }
 
 static void usage(void) {
+  fprintf(stderr, "Version: %s\n", version);
   fprintf(stderr, "Usage: procurator-server [options]\n");
   fprintf(stderr, "       procurator-server --help\n");
   fprintf(stderr, "Examples:\n");

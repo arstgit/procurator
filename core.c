@@ -1,5 +1,7 @@
 #include "core.h"
 
+char *version = "1.1.0";
+
 unsigned char key[32];
 unsigned char iv[16];
 
@@ -38,7 +40,7 @@ unsigned char buf[BUF_SIZE];
 unsigned char tmpBuf[TMP_BUF_SIZE];
 int serverflag;
 int connectPool[CONNECT_POOL_SIZE];
-uint64_t nowms, lastCheckms;
+uint64_t nowms, lastCheckConnectionAndUdp;
 
 // Return the UNIX time in millisecond.
 static inline uint64_t mstime(void) {
@@ -357,7 +359,7 @@ void freeEvinfo(struct evinfo *einfo) {
     }
   } else if (einfo->type == IN || einfo->type == OUT) {
     if (close(einfo->fd) == -1) {
-      perror("Clean: close");
+      perror("clean: close");
       exit(EXIT_FAILURE);
     }
   } else {
@@ -409,9 +411,13 @@ int udpRelayDictAddOrUpdate(void *key, struct sockaddr_storage *addr,
 
   val->addr = *(struct sockaddr_storage *)addr;
   val->addrlen = addrlen;
-  val->lastVisited = mstime();
+  val->lastVisited = nowms;
 
-  int n = dictUpdateOrAdd(udpRelayDict, entryKey, val);
+  int added = dictUpdateOrAdd(udpRelayDict, entryKey, val);
+  if (!added) {
+    // Already exists.
+    free(entryKey);
+  }
 
   return 0;
 }
@@ -448,21 +454,50 @@ int udpRelayDictGetByKey(void *key, struct sockaddr_storage **dst_addr,
   return 0;
 }
 
-int udpRelayDictSweepTimeout() {
+int udpRelayDictSweep() {
   dictIteratorRewind(udpRelayDictIterator);
 
   dictEntry *entry;
   unsigned char *key;
   struct udpRelayEntry *val;
 
+  int swept = 0, remain = 0;
+
   while (entry = dictIteratorNext(udpRelayDictIterator)) {
     key = entry->key;
     val = (struct udpRelayEntry *)entry->val;
 
-    if (mstime() - val->lastVisited > 30 * 1000) {
+    if (nowms - val->lastVisited > 30 * 1000) {
       dictEntryDelete(udpRelayDict, key, 0);
+      swept++;
+    } else {
+      remain++;
     }
   }
+
+  tlog(LL_DEBUG, "udpRelayDict entries, swept: %d, remain: %d", swept, remain);
+
+  return 0;
+}
+
+int connectionSweep() {
+  listNode *node;
+  int swept = 0, remain = 0;
+
+  listIteratorRewind(evinfolist, evinfolistIter);
+  while ((node = listIteratorNext(evinfolistIter))) {
+    struct evinfo *curinfo = node->value;
+
+    if (nowms - curinfo->last_active > MAX_IDLE_TIME) {
+      clean(curinfo);
+
+      swept++;
+    } else {
+      remain++;
+    }
+  }
+
+  tlog(LL_DEBUG, "connection, swept: %d, remain: %d", swept, remain);
 
   return 0;
 }
@@ -711,6 +746,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   einfo->ptr = ptr;
   einfo->last_active = nowms;
 
+  // Initailize encryptor.
   einfo->encryptor.encryptCtx = NULL;
   einfo->encryptor.decryptCtx = NULL;
   einfo->encryptor.sentIv = 0;
@@ -750,7 +786,8 @@ static int checkConnected(int fd) {
     return -1;
   }
   if (result != 0) {
-    // eprint(STDERR_FILENO, "checkConnected reasult not 0.\n", INFO_LEVEL, 1);
+    // eprint(STDERR_FILENO, "checkConnected reasult not 0.\n", INFO_LEVEL,
+    // 1);
     return -1;
   }
 
@@ -761,99 +798,32 @@ static int connOutConnected(struct evinfo *einfo) {
   return checkConnected(einfo->fd);
 }
 
-int setkeepalive(int fd) {
-  int optval;
-
-  optval = TCPKEEPALIVE;
-  if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &optval, sizeof(optval)) == -1) {
-    return -1;
-  }
-  optval = TCPKEEPIDLE;
-  if (setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &optval, sizeof(optval)) == -1) {
-    return -1;
-  }
-  optval = TCPKEEPINTVL;
-  if (setsockopt(fd, SOL_TCP, TCP_KEEPINTVL, &optval, sizeof(optval)) == -1) {
-    return -1;
-  }
-  optval = TCPKEEPCNT;
-  if (setsockopt(fd, SOL_TCP, TCP_KEEPCNT, &optval, sizeof(optval)) == -1) {
-    return -1;
-  }
-
-  return 0;
-}
-
 int connOut(struct evinfo *einfo, char *outhost, char *outport) {
-  int outfd, tmpfd;
-  ssize_t numRead;
-  rdpConn *c;
+  int outfd;
+  rdpConn *newStoreConn;
 
-  // TO DO
-  if (0 && serverflag == 0) {
-    outfd = connPool.fds[connPool.next];
-    numRead = recv(outfd, buf, BUF_SIZE, MSG_PEEK);
-    // if (numRead == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-    if (checkConnected(outfd) == 0 && numRead == -1 &&
-        (errno == EAGAIN || errno == EWOULDBLOCK)) {
-      // This fd is usable.
-    } else {
-      if (numRead == -1) {
-        perror("recv, connOut");
-      }
-      if (numRead > 0) {
-        tlog(LL_DEBUG, "recv, connOut, numRead > 0.");
-      }
+  if (serverflag == 0) {
+    // Local connect to Server.
+    einfo->ptr = connPool.einfos[connPool.next];
+    assert(einfo->ptr != NULL);
+    einfo->ptr->ptr = einfo;
 
-      if (close(outfd) == -1) {
-        perror("close, connOut");
-      }
-      outfd = inetConnect(outhost, outport, SOCK_STREAM);
-      if (outfd == -1) {
-        perror("inetConnect, connOut local1");
-        return -1;
-      }
-      if (setkeepalive(outfd) == -1) {
-        if (close(outfd) == -1) {
-          perror("close, connOut, setkeepalive");
-        }
-        return -1;
-      }
-    }
+    newStoreConn = rdpNetConnect(rdpS, outhost, outport);
+    assert(newStoreConn != NULL);
 
-    tmpfd = inetConnect(outhost, outport, SOCK_STREAM);
-    if (tmpfd == -1) {
-      perror("inetConnect, connOut local2");
-      return -1;
-    }
-    if (setkeepalive(tmpfd) == -1) {
-      if (close(tmpfd) == -1) {
-        perror("close, connOut, setkeepalive");
-      }
-      return -1;
-    }
-    connPool.fds[connPool.next] = tmpfd;
+    connPool.einfos[connPool.next] =
+        eadd(RDP_OUT, 0, -1, NULL, EPOLLOUT | EPOLLIN | EPOLLET, newStoreConn);
+
     if (connPool.next++ == CONNECT_POOL_SIZE - 1)
       connPool.next = 0;
   } else {
-
-    if (serverflag == 0) {
-      c = rdpNetConnect(rdpS, outhost, outport);
-      if (c == NULL) {
-        tlog(LL_DEBUG, "rdpNetConnect");
-        return -1;
-      }
-    } else {
-      outfd = inetConnect(outhost, outport, SOCK_STREAM);
-      if (outfd == -1) {
-        perror("inetConnect, connOut server");
-        return -1;
-      }
+    // Server connect outside.
+    outfd = inetConnect(outhost, outport, SOCK_STREAM);
+    if (outfd == -1) {
+      perror("inetConnect, connOut server");
+      return -1;
     }
-  }
-  if (serverflag == 0) {
-    einfo->ptr = eadd(RDP_OUT, 0, -1, einfo, EPOLLOUT | EPOLLIN | EPOLLET, c);
-  } else {
+
     einfo->ptr =
         eadd(OUT, outfd, -1, einfo, EPOLLOUT | EPOLLIN | EPOLLET, NULL);
   }
@@ -1030,35 +1000,12 @@ int afterSleep() {
 }
 
 int beforeSleep() {
-  if (nowms - lastCheckms >= CHECK_TIMEOUT_INTERVAL) {
-    udpRelayDictSweepTimeout();
-  }
+  if (nowms - lastCheckConnectionAndUdp >= CHECK_TIMEOUT_INTERVAL) {
+    udpRelayDictSweep();
 
-  if (nowms - lastCheckms >= CHECK_TIMEOUT_INTERVAL) {
-    listNode *node;
-    int activecnt = 0;
-    listIteratorRewind(evinfolist, evinfolistIter);
-    while (node = listIteratorNext(evinfolistIter)) {
-      struct evinfo *curinfo = node->value;
+    connectionSweep();
 
-      if ((nowms - curinfo->last_active) < MAX_IDLE_TIME) {
-        activecnt++;
-        if (curinfo->bufEndIndex - curinfo->bufStartIndex > 0) {
-          tlog(LL_DEBUG, "dirty bytes: %d",
-               curinfo->bufEndIndex - curinfo->bufStartIndex);
-        }
-        continue;
-      } else {
-        tlog(LL_DEBUG, "cleaning. timeout.");
-
-        clean(curinfo);
-        continue;
-      }
-    }
-
-    tlog(LL_DEBUG, "activecnt: %d", activecnt);
-
-    lastCheckms = mstime();
+    lastCheckConnectionAndUdp = nowms;
   }
 
   int timeout;
@@ -1130,6 +1077,18 @@ void eloop(char *port, char *udpPort,
     exit(EXIT_FAILURE);
   }
 
+  // Populate connection pool. For faster connect hand shake.
+  if (serverflag == 0) {
+    rdpConn *conn;
+    for (int i = 0; i < CONNECT_POOL_SIZE; i++) {
+      conn = rdpNetConnect(rdpS, remoteHost, remotePort);
+      assert(conn != NULL);
+
+      connPool.einfos[i] =
+          eadd(RDP_OUT, 0, -1, NULL, EPOLLOUT | EPOLLIN | EPOLLET, conn);
+    }
+  }
+
   rdpListenEvinfo =
       eadd(RDP_LISTEN, rdpfd, -1, NULL, EPOLLIN | EPOLLOUT | EPOLLET, NULL);
 
@@ -1170,29 +1129,10 @@ void eloop(char *port, char *udpPort,
   udpListenEvinfo->ptr = udpListenOutEvinfo;
   udpListenOutEvinfo->ptr = udpListenEvinfo;
 
-  if (0 && serverflag == 0) {
-    int i, fd;
+  tlog(LL_NOTICE, "Version: %s", version);
+  tlog(LL_NOTICE, "started!");
 
-    connPool.next = 0;
-    for (i = 0; i < CONNECT_POOL_SIZE; i++) {
-      fd = inetConnect(remoteHost, remotePort, SOCK_STREAM);
-      if (fd == -1) {
-        perror("inetConnect, eloop");
-        exit(EXIT_FAILURE);
-      }
-      if (setkeepalive(fd) == -1) {
-        if (close(fd) == -1) {
-          perror("close, eloop, setkeepalive");
-        }
-        exit(EXIT_FAILURE);
-      }
-      connPool.fds[i] = fd;
-    }
-  }
-
-  tlog(LL_DEBUG, "started!");
-
-  nowms = lastCheckms = mstime();
+  nowms = lastCheckConnectionAndUdp = mstime();
 
   for (;;) {
     int timeout;
@@ -1303,12 +1243,8 @@ void eloop(char *port, char *udpPort,
               tlog(LL_DEBUG, "rdp connected");
 
               einfo = rdpConnGetUserData(conn);
-              if (einfo == NULL) {
-                tlog(LL_DEBUG, "rdpConnGetUserData");
-                exit(EXIT_FAILURE);
-              }
 
-              assert(einfo->type == RDP_OUT);
+              assert(einfo != NULL);
 
               if (trySend(einfo) == -1) {
                 tlog(LL_DEBUG, "cleaning. trySend: RDP_OUT connected");
@@ -1316,6 +1252,7 @@ void eloop(char *port, char *udpPort,
                 continue;
               }
             }
+
             if (flag & RDP_ACCEPT) {
               tlog(LL_DEBUG, "rdp accept");
               // Only accept a connection on server end.
@@ -1325,6 +1262,7 @@ void eloop(char *port, char *udpPort,
                 rdpConnClose(conn);
               }
             }
+
             if (flag & RDP_DATA) {
               einfo = rdpConnGetUserData(conn);
               if (einfo == NULL) {
@@ -1338,7 +1276,6 @@ void eloop(char *port, char *udpPort,
                 clean(einfo);
               } else if (n > 0) {
                 if (einfo->type == RDP_IN) {
-                  assert(serverflag == 1);
                   if (handleInBuf(einfo, handleInData, buf, n) == -1) {
                     tlog(LL_DEBUG, "cleaning. handleInBuf RDP_IN");
                     clean(einfo);
