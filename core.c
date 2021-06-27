@@ -999,8 +999,8 @@ int destroyAll() {
   listIteratorDestroy(evinfolistIter);
   listDestroy(evinfolist);
 
-  dictDestroy(udpRelayDict);
   dictIteratorDestroy(udpRelayDictIterator);
+  dictDestroy(udpRelayDict);
 
   if (serverflag == 0) {
     close(tcpListenEvinfo->fd);
