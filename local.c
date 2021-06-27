@@ -288,6 +288,8 @@ int main(int argc, char **argv) {
            &((struct sockaddr_in *)ainfo->ai_addr)->sin_addr, 4);
     memcpy(udpTargetHeader + 8,
            &((struct sockaddr_in *)ainfo->ai_addr)->sin_port, 2);
+
+    freeaddrinfo(ainfo);
   }
 
   eloop(localPort, localUdpPort, handleInData, handleUdpIn, handleUdpOut);

@@ -973,6 +973,11 @@ int destroyAll() {
   dictDestroy(udpRelayDict);
 
   if (serverflag == 0) {
+    // Free einfos in connect pool.
+    for (int i = 0; i < CONNECT_POOL_SIZE; i++) {
+      freeEvinfo(connPool.einfos[i]);
+    }
+
     close(tcpListenEvinfo->fd);
     free(tcpListenEvinfo);
   }
