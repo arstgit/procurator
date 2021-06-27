@@ -5,7 +5,7 @@ core
 
 procurator-local
 procurator-server
-curltest
+ctest
 
 .vscode
 .ccls-cache
