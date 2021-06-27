@@ -1,6 +1,6 @@
 [submodule "liblist"]
 	path = liblist
-	url = https://github.com/derekchuank/liblist
+	url = git@github.com:derekchuank/liblist
 [submodule "librdp"]
 	path = librdp
-	url = https://github.com/derekchuank/librdp
+	url = git@github.com:derekchuank/librdp
