@@ -343,12 +343,14 @@ void freeEvinfo(struct evinfo *einfo) {
   assert(einfo->state != ES_DESTROY);
   einfo->state = ES_DESTROY;
 
+  int etype = einfo->type;
+
   if (einfo->bufEndIndex - einfo->bufStartIndex > 0) {
     tlog(LL_VERBOSE, "cleaning dirty bytes: %d",
          einfo->bufEndIndex - einfo->bufStartIndex);
   }
 
-  if (einfo->type == RDP_IN || einfo->type == RDP_OUT) {
+  if (etype == RDP_IN || etype == RDP_OUT) {
     if (rdpConnSetUserData(einfo->c, NULL) == -1) {
       tlog(LL_DEBUG, "rdpConnSetUserData");
       exit(EXIT_FAILURE);
@@ -357,7 +359,7 @@ void freeEvinfo(struct evinfo *einfo) {
       tlog(LL_DEBUG, "rdpConnClose error");
       exit(EXIT_FAILURE);
     }
-  } else if (einfo->type == IN || einfo->type == OUT) {
+  } else if (etype == IN || etype == OUT) {
     if (close(einfo->fd) == -1) {
       perror("clean: close");
       exit(EXIT_FAILURE);
@@ -366,12 +368,13 @@ void freeEvinfo(struct evinfo *einfo) {
     tlog(LL_DEBUG,
          "clean not valid type. einfo: type: %d, fd: %d, conn: %d, stage: %d",
          einfo->type, einfo->fd, einfo->c, einfo->stage);
-    exit(EXIT_FAILURE);
+    assert(0);
   }
 
   if (einfo->bufLen > 0) {
     free(einfo->buf);
   }
+
   freeCipher(&einfo->encryptor);
 
   free(einfo);
@@ -525,6 +528,7 @@ void clean(struct evinfo *einfo) {
 
     listNodeDestroy(evinfolist, einfo->ptr->node);
   } else {
+    assert(0);
   }
 }
 
@@ -626,7 +630,7 @@ int sendOrStore(int self, void *buf, size_t len, int flags,
         }
         break;
       } else {
-        perror("send: sendOrStore");
+        perror("sendOrRdpWrite");
         return -1;
       }
     } else {
@@ -1244,11 +1248,44 @@ void eloop(char *port, char *udpPort,
             if (flag & RDP_AGAIN) {
               break;
             }
+
+            if (flag & RDP_CONN_ERROR) {
+              tlog(LL_DEBUG, "RDP_CONN_ERROR");
+
+              einfo = rdpConnGetUserData(conn);
+              assert(einfo != NULL);
+
+              int inConnPool = 0;
+              if (serverflag == 0) {
+                rdpConn *newStoreConn;
+                for (int i = 0; i < CONNECT_POOL_SIZE; i++) {
+                  if (einfo == connPool.einfos[i]) {
+                    // Connection in the pool have an error, renew it.
+                    newStoreConn = rdpNetConnect(rdpS, remoteHost, remotePort);
+                    assert(newStoreConn != NULL);
+
+                    connPool.einfos[i] =
+                        eadd(RDP_OUT, 0, -1, NULL, EPOLLOUT | EPOLLIN | EPOLLET,
+                             newStoreConn);
+
+                    inConnPool = 1;
+                  }
+                }
+              }
+
+              if (inConnPool) {
+                freeEvinfo(einfo);
+              } else {
+                clean(einfo);
+              }
+
+              continue;
+            }
+
             if (flag & RDP_CONNECTED) {
               tlog(LL_DEBUG, "rdp connected");
 
               einfo = rdpConnGetUserData(conn);
-
               assert(einfo != NULL);
 
               if (trySend(einfo) == -1) {
@@ -1293,7 +1330,7 @@ void eloop(char *port, char *udpPort,
                   }
                 } else {
                   tlog(LL_DEBUG, "einfo type not RDP_IN or RDP_OUT");
-                  exit(EXIT_FAILURE);
+                  assert(0);
                 }
               } else {
                 assert(0);
