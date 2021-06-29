@@ -31,7 +31,6 @@ struct udpRelayEntry {
 
 struct evinfo *tcpListenEvinfo, *udpListenEvinfo, *udpListenOutEvinfo,
     *rdpListenEvinfo;
-struct connectPool connPool;
 
 rdpSocket *rdpS;
 int rdpfd;
@@ -808,18 +807,11 @@ int connOut(struct evinfo *einfo, char *outhost, char *outport) {
 
   if (serverflag == 0) {
     // Local connect to Server.
-    einfo->ptr = connPool.einfos[connPool.next];
-    assert(einfo->ptr != NULL);
-    einfo->ptr->ptr = einfo;
-
     newStoreConn = rdpNetConnect(rdpS, outhost, outport);
     assert(newStoreConn != NULL);
 
-    connPool.einfos[connPool.next] =
-        eadd(RDP_OUT, 0, -1, NULL, EPOLLOUT | EPOLLIN | EPOLLET, newStoreConn);
-
-    if (connPool.next++ == CONNECT_POOL_SIZE - 1)
-      connPool.next = 0;
+    einfo->ptr =
+        eadd(RDP_OUT, 0, -1, einfo, EPOLLOUT | EPOLLIN | EPOLLET, newStoreConn);
   } else {
     // Server connect outside.
     outfd = inetConnect(outhost, outport, SOCK_STREAM);
@@ -977,11 +969,6 @@ int destroyAll() {
   dictDestroy(udpRelayDict);
 
   if (serverflag == 0) {
-    // Free einfos in connect pool.
-    for (int i = 0; i < CONNECT_POOL_SIZE; i++) {
-      freeEvinfo(connPool.einfos[i]);
-    }
-
     close(tcpListenEvinfo->fd);
     free(tcpListenEvinfo);
   }
@@ -1084,18 +1071,6 @@ void eloop(char *port, char *udpPort,
   if (rdpfd == -1) {
     tlog(LL_DEBUG, "rdpSocket get fd");
     exit(EXIT_FAILURE);
-  }
-
-  // Populate connection pool. For faster connect hand shake.
-  if (serverflag == 0) {
-    rdpConn *conn;
-    for (int i = 0; i < CONNECT_POOL_SIZE; i++) {
-      conn = rdpNetConnect(rdpS, remoteHost, remotePort);
-      assert(conn != NULL);
-
-      connPool.einfos[i] =
-          eadd(RDP_OUT, 0, -1, NULL, EPOLLOUT | EPOLLIN | EPOLLET, conn);
-    }
   }
 
   rdpListenEvinfo =
@@ -1255,29 +1230,7 @@ void eloop(char *port, char *udpPort,
               einfo = rdpConnGetUserData(conn);
               assert(einfo != NULL);
 
-              int inConnPool = 0;
-              if (serverflag == 0) {
-                rdpConn *newStoreConn;
-                for (int i = 0; i < CONNECT_POOL_SIZE; i++) {
-                  if (einfo == connPool.einfos[i]) {
-                    // Connection in the pool have an error, renew it.
-                    newStoreConn = rdpNetConnect(rdpS, remoteHost, remotePort);
-                    assert(newStoreConn != NULL);
-
-                    connPool.einfos[i] =
-                        eadd(RDP_OUT, 0, -1, NULL, EPOLLOUT | EPOLLIN | EPOLLET,
-                             newStoreConn);
-
-                    inConnPool = 1;
-                  }
-                }
-              }
-
-              if (inConnPool) {
-                freeEvinfo(einfo);
-              } else {
-                clean(einfo);
-              }
+              clean(einfo);
 
               continue;
             }
