@@ -1226,13 +1226,13 @@ void eloop(char *port, char *udpPort,
           continue;
         } else if (etype == IN) {
           if (handleIn(einfo, handleInData) == -1) {
-            tlog(LL_DEBUG, "cleaning, handlein, etype == IN.");
+            tlog(LL_DEBUG, "handleIn, etype IN");
             clean(einfo);
             continue;
           }
         } else if (etype == OUT) {
           if (handleIn(einfo, handleOutData) == -1) {
-            tlog(LL_DEBUG, "cleaning, handlein, etype == OUT.");
+            tlog(LL_DEBUG, "handleIN etype OUT");
             clean(einfo);
             continue;
           }
@@ -1283,8 +1283,6 @@ void eloop(char *port, char *udpPort,
             }
 
             if (flag & RDP_CONNECTED) {
-              tlog(LL_DEBUG, "rdp connected");
-
               einfo = rdpConnGetUserData(conn);
               assert(einfo != NULL);
 
@@ -1296,7 +1294,6 @@ void eloop(char *port, char *udpPort,
             }
 
             if (flag & RDP_ACCEPT) {
-              tlog(LL_DEBUG, "rdp accept");
               // Only accept a connection on server end.
               if (serverflag == 1) {
                 eadd(RDP_IN, 0, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET, conn);
