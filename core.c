@@ -469,7 +469,7 @@ int udpRelayDictSweep() {
     key = entry->key;
     val = (struct udpRelayEntry *)entry->val;
 
-    if (nowms - val->lastVisited > 30 * 1000) {
+    if (nowms - val->lastVisited > MAX_UDP_IDLE_TIME) {
       dictEntryDelete(udpRelayDict, key, 0);
       swept++;
     } else {
@@ -477,7 +477,10 @@ int udpRelayDictSweep() {
     }
   }
 
-  tlog(LL_DEBUG, "udpRelayDict entries, swept: %d, remain: %d", swept, remain);
+  if (swept != 0 || remain != 0) {
+    tlog(LL_DEBUG, "udpRelayDict entries, swept: %d, remain: %d", swept,
+         remain);
+  }
 
   return 0;
 }
@@ -499,7 +502,7 @@ int connectionSweep() {
     }
   }
 
-  if (swept != 0 && remain != 0) {
+  if (swept != 0 || remain != 0) {
     tlog(LL_DEBUG, "connection, swept: %d, remain: %d", swept, remain);
   }
 
@@ -1263,6 +1266,7 @@ void eloop(char *port, char *udpPort,
                 // It means we have called clean(einfo) in other place.
                 continue;
               }
+              einfo->last_active = nowms;
 
               if (n == 0) {
                 tlog(LL_DEBUG, "cleaning. rdp data EOF");
@@ -1297,6 +1301,8 @@ void eloop(char *port, char *udpPort,
                 // It means we have called clean(einfo) in other place.
                 continue;
               }
+              einfo->last_active = nowms;
+
               if (trySend(einfo) == -1) {
                 tlog(LL_DEBUG, "cleaning. trySend: eloop RDP_POLLOUT");
                 clean(einfo);

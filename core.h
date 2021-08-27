@@ -48,10 +48,12 @@
 #define BUF_FACTOR2 16
 #define CONNECT_POOL_SIZE 2
 
-#define CHECK_TIMEOUT_INTERVAL 5 * 1000
+#define CHECK_TIMEOUT_INTERVAL (5 * 1000)
 
 // A connection is allowed idle MAX_IDLE_TIME seconds at most.
-#define MAX_IDLE_TIME 10 * 60 * 1000
+#define MAX_IDLE_TIME (10 * 60 * 1000)
+// UDP relay entry registration timeout.
+#define MAX_UDP_IDLE_TIME (30 * 1000)
 
 extern char *version;
 extern char *remoteHost;
