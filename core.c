@@ -499,7 +499,9 @@ int connectionSweep() {
     }
   }
 
-  tlog(LL_DEBUG, "connection, swept: %d, remain: %d", swept, remain);
+  if (swept != 0 && remain != 0) {
+    tlog(LL_DEBUG, "connection, swept: %d, remain: %d", swept, remain);
+  }
 
   return 0;
 }
