@@ -1128,15 +1128,14 @@ void eloop(char *port, char *udpPort,
     timeout = beforeSleep();
     assert(timeout > 0);
     nfds = epoll_wait(efd, evlist, 1, timeout);
-    afterSleep();
-
     // nfds = epoll_wait(efd, evlist, MAX_EVENTS, -1);
-    if (nfds == -1) {
+    // Closing laptop lid can trigger EINTR.
+    if (nfds == -1 && errno != EINTR) {
       perror("epoll_wait");
-      if (errno == EINTR)
-        continue;
       exit(EXIT_FAILURE);
     }
+
+    afterSleep();
 
     for (int n = 0; n < nfds; n++) {
       einfo = (struct evinfo *)evlist[n].data.ptr;
