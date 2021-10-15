@@ -1,6 +1,6 @@
 #include "core.h"
 
-char *version = "1.1.0";
+char *version = "1.1.1";
 
 unsigned char key[32];
 unsigned char iv[16];
