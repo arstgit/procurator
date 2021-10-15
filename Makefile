@@ -42,8 +42,9 @@ anyway: clean all
 
 .PHONY: install
 install:
-	cp procurator-local /usr/local/bin/procurator-local
-	cp procurator-server /usr/local/bin/procurator-server
+	mkdir -p /bin
+	install -m 755 -T procurator-local /bin/procurator-local
+	install -m 755 -T procurator-server /bin/procurator-server
 
 .PHONY: clean
 clean:
