@@ -1141,8 +1141,6 @@ void eloop(char *port, char *udpPort,
       einfo = (struct evinfo *)evlist[n].data.ptr;
       etype = einfo->type;
 
-      einfo->last_active = nowms;
-
       if (evlist[n].events & EPOLLERR) {
         tlog(LL_DEBUG, "cleaning. EPOLLERR type: %d, buf: %d, %d, %d.", etype,
              einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
@@ -1204,12 +1202,16 @@ void eloop(char *port, char *udpPort,
           }
           continue;
         } else if (etype == IN) {
+          einfo->last_active = nowms;
+
           if (handleIn(einfo, handleInData) == -1) {
             tlog(LL_DEBUG, "handleIn, etype IN");
             clean(einfo);
             continue;
           }
         } else if (etype == OUT) {
+          einfo->ptr->last_active = nowms;
+
           if (handleIn(einfo, handleOutData) == -1) {
             tlog(LL_DEBUG, "handleIN etype OUT");
             clean(einfo);
@@ -1265,7 +1267,6 @@ void eloop(char *port, char *udpPort,
                 // It means we have called clean(einfo) in other place.
                 continue;
               }
-              einfo->last_active = nowms;
 
               if (n == 0) {
                 tlog(LL_DEBUG, "cleaning. rdp data EOF");
@@ -1273,12 +1274,14 @@ void eloop(char *port, char *udpPort,
                 clean(einfo);
               } else if (n > 0) {
                 if (einfo->type == RDP_IN) {
+                  einfo->last_active = nowms;
                   if (handleInBuf(einfo, handleInData, buf, n) == -1) {
                     tlog(LL_DEBUG, "cleaning. handleInBuf RDP_IN");
                     clean(einfo);
                   }
                 } else if (einfo->type == RDP_OUT) {
                   assert(serverflag == 0);
+                  einfo->ptr->last_active = nowms;
                   if (handleInBuf(einfo, handleOutData, buf, n) == -1) {
                     tlog(LL_DEBUG, "cleaning. handleInBuf RDP_OUT");
                     clean(einfo);
