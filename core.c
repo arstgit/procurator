@@ -493,7 +493,7 @@ int connectionSweep() {
   while ((node = listIteratorNext(evinfolistIter))) {
     struct evinfo *curinfo = node->value;
 
-    if (nowms - curinfo->last_active > MAX_IDLE_TIME) {
+    if (nowms - curinfo->last_active > MAX_IDLE_TIME && (curinfo->ptr == NULL || nowms - curinfo->ptr->last_active > MAX_IDLE_TIME)) {
       clean(curinfo);
 
       swept++;
@@ -552,6 +552,8 @@ static int trySend(struct evinfo *einfo) {
   ssize_t numSend;
   size_t len;
   unsigned char *buf;
+
+  einfo->last_active = nowms;
 
   len = einfo->bufEndIndex - einfo->bufStartIndex;
   buf = einfo->buf + einfo->bufStartIndex;
@@ -878,6 +880,8 @@ static int handleInBuf(struct evinfo *einfo,
     tlog(LL_DEBUG, "numRead === BUF_SIZE");
   }
 
+  einfo->last_active = nowms;
+
   if (handleInData(einfo, dst, dstLen) == -1) {
     tlog(LL_DEBUG, "handleInBuf: handleInData");
     return -1;
@@ -1202,16 +1206,12 @@ void eloop(char *port, char *udpPort,
           }
           continue;
         } else if (etype == IN) {
-          einfo->last_active = nowms;
-
           if (handleIn(einfo, handleInData) == -1) {
             tlog(LL_DEBUG, "handleIn, etype IN");
             clean(einfo);
             continue;
           }
         } else if (etype == OUT) {
-          einfo->ptr->last_active = nowms;
-
           if (handleIn(einfo, handleOutData) == -1) {
             tlog(LL_DEBUG, "handleIN etype OUT");
             clean(einfo);
@@ -1274,14 +1274,12 @@ void eloop(char *port, char *udpPort,
                 clean(einfo);
               } else if (n > 0) {
                 if (einfo->type == RDP_IN) {
-                  einfo->last_active = nowms;
                   if (handleInBuf(einfo, handleInData, buf, n) == -1) {
                     tlog(LL_DEBUG, "cleaning. handleInBuf RDP_IN");
                     clean(einfo);
                   }
                 } else if (einfo->type == RDP_OUT) {
                   assert(serverflag == 0);
-                  einfo->ptr->last_active = nowms;
                   if (handleInBuf(einfo, handleOutData, buf, n) == -1) {
                     tlog(LL_DEBUG, "cleaning. handleInBuf RDP_OUT");
                     clean(einfo);
@@ -1303,7 +1301,6 @@ void eloop(char *port, char *udpPort,
                 // It means we have called clean(einfo) in other place.
                 continue;
               }
-              einfo->last_active = nowms;
 
               if (trySend(einfo) == -1) {
                 tlog(LL_DEBUG, "cleaning. trySend: eloop RDP_POLLOUT");
