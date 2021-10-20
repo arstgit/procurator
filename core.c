@@ -1448,12 +1448,7 @@ void eloop(char *port, char *udpPort,
               if (n == 0) {
                 tlog(LL_DEBUG, "rdp data EOF");
 
-                // See evstateTo for ES_HALF_CLOSED.
-                if (serverflag && evBufferRemain(einfo)) {
-                  evstateTo(einfo, ES_HALF_CLOSED);
-                } else {
-                  evstateTo(einfo, ES_CLOSED);
-                }
+                evstateTo(einfo, ES_CLOSED);
               } else if (n > 0) {
                 if (einfo->type == RDP_IN) {
                   if (handleInBuf(einfo, handleInData, buf, n) == -1) {
