@@ -607,7 +607,6 @@ inline static void connectionSweep() {
 
     if (nowms - curinfo->last_active > MAX_IDLE_TIME && (curinfo->ptr == NULL || nowms - curinfo->ptr->last_active > MAX_IDLE_TIME)) {
       evstateTo(curinfo, ES_CLOSED);
-      clean(curinfo);
 
       swept++;
     } else {
@@ -1274,14 +1273,12 @@ void eloop(char *port, char *udpPort,
         tlog(LL_DEBUG, "EPOLLERR, type: %d, buf: %d, %d, %d.", etype,
              einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         evstateTo(einfo, ES_CLOSED);
-        clean(einfo);
         continue;
       }
       if (evlist[n].events & EPOLLHUP) {
         tlog(LL_DEBUG, "EPOLLHUP type: %d, buf: %d, %d, %d.", etype,
              einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         evstateTo(einfo, ES_CLOSED);
-        clean(einfo);
         continue;
       }
 
@@ -1292,7 +1289,6 @@ void eloop(char *port, char *udpPort,
               tlog(LL_DEBUG, "not connected.");
 
               evstateTo(einfo, ES_CLOSED);
-              clean(einfo);
               continue;
             } else {
               einfo->outconnected = 1;
@@ -1304,14 +1300,12 @@ void eloop(char *port, char *udpPort,
             tlog(LL_DEBUG, "trySend: eloop");
 
             evstateTo(einfo, ES_CLOSED);
-            clean(einfo);
             continue;
           }
         } else if (etype == IN) {
           if (trySend(einfo) == -1) {
             tlog(LL_DEBUG, "trySend: eloop");
             evstateTo(einfo, ES_CLOSED);
-            clean(einfo);
             continue;
           }
         } else if (etype == RDP_LISTEN) {
@@ -1346,7 +1340,6 @@ void eloop(char *port, char *udpPort,
             case RETEOF:
               tlog(LL_DEBUG, "handleIn, etype IN, ret: %d", ret);
               evstateTo(einfo, ES_CLOSED);
-              clean(einfo);
               break;
             case 0:
               break;
@@ -1362,7 +1355,6 @@ void eloop(char *port, char *udpPort,
             case -1:
               tlog(LL_DEBUG, "handleIn, etype OUT, ret: %d", ret);
               evstateTo(einfo, ES_CLOSED);
-              clean(einfo);
               break;
             case RETEOF:
               tlog(LL_DEBUG, "handleIn, etype OUT, ret: %d", ret);
@@ -1374,7 +1366,6 @@ void eloop(char *port, char *udpPort,
                 evstateTo(einfo, ES_CLOSED);
               }
 
-              clean(einfo);
               break;
             case 0:
               break;
@@ -1408,7 +1399,6 @@ void eloop(char *port, char *udpPort,
               }
 
               evstateTo(einfo, ES_CLOSED);
-              clean(einfo);
 
               continue;
             }
@@ -1428,7 +1418,6 @@ void eloop(char *port, char *udpPort,
                 tlog(LL_DEBUG, "trySend: RDP_CONNECTED.");
                 
                 evstateTo(einfo, ES_CLOSED);
-                clean(einfo);
                 continue;
               }
             }
@@ -1465,21 +1454,18 @@ void eloop(char *port, char *udpPort,
                 } else {
                   evstateTo(einfo, ES_CLOSED);
                 }
-                clean(einfo);
               } else if (n > 0) {
                 if (einfo->type == RDP_IN) {
                   if (handleInBuf(einfo, handleInData, buf, n) == -1) {
                     tlog(LL_DEBUG, "handleInBuf RDP_IN");
 
                     evstateTo(einfo, ES_CLOSED);
-                    clean(einfo);
                   }
                 } else if (einfo->type == RDP_OUT) {
                   assert(serverflag == 0);
                   if (handleInBuf(einfo, handleOutData, buf, n) == -1) {
                     tlog(LL_DEBUG, "handleInBuf RDP_OUT");
                     evstateTo(einfo, ES_CLOSED);
-                    clean(einfo);
                   }
                 } else {
                   tlog(LL_DEBUG, "einfo type not RDP_IN or RDP_OUT");
@@ -1508,7 +1494,6 @@ void eloop(char *port, char *udpPort,
               if (trySend(einfo) == -1) {
                 tlog(LL_DEBUG, "trySend: eloop RDP_POLLOUT");
                 evstateTo(einfo, ES_CLOSED);
-                clean(einfo);
               }
             }
             if (flag & RDP_CONTINUE) {
