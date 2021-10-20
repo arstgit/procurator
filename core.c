@@ -338,18 +338,29 @@ int inetListenTCP(const char *service, int backlog, socklen_t *addrlen) {
   return inetPassiveSocket(service, SOCK_STREAM, addrlen, 1, backlog);
 }
 
+inline static int etypeIsRDP(struct evinfo *einfo) {
+  return einfo->type == RDP_IN || einfo->type == RDP_OUT;
+}
+
+inline static int etypeIsTCP(struct evinfo *einfo) {
+  return einfo->type == IN || einfo->type == OUT;
+}
+
+inline static int etypeIsIN(struct evinfo *einfo) {
+  return einfo->type == IN || einfo->type == RDP_IN;
+}
+
+inline static int etypeIsOUT(struct evinfo *einfo) {
+  return einfo->type == OUT || einfo->type == RDP_OUT;
+}
+
 void freeEvinfo(struct evinfo *einfo) {
-  assert(einfo->state != ES_DESTROY);
-  einfo->state = ES_DESTROY;
-
-  int etype = einfo->type;
-
   if (einfo->bufEndIndex - einfo->bufStartIndex > 0) {
     tlog(LL_VERBOSE, "cleaning dirty bytes: %d",
          einfo->bufEndIndex - einfo->bufStartIndex);
   }
 
-  if (etype == RDP_IN || etype == RDP_OUT) {
+  if (etypeIsRDP(einfo)) {
     if (rdpConnSetUserData(einfo->c, NULL) == -1) {
       tlog(LL_DEBUG, "rdpConnSetUserData");
       exit(EXIT_FAILURE);
@@ -358,15 +369,12 @@ void freeEvinfo(struct evinfo *einfo) {
       tlog(LL_DEBUG, "rdpConnClose error");
       exit(EXIT_FAILURE);
     }
-  } else if (etype == IN || etype == OUT) {
+  } else if(etypeIsTCP(einfo)) {
     if (close(einfo->fd) == -1) {
       perror("clean: close");
       exit(EXIT_FAILURE);
     }
   } else {
-    tlog(LL_DEBUG,
-         "clean not valid type. einfo: type: %d, fd: %d, conn: %d, stage: %d",
-         einfo->type, einfo->fd, einfo->c, einfo->stage);
     assert(0);
   }
 
@@ -512,20 +520,20 @@ int connectionSweep() {
 void evinfoPairFree(void *val) {
   struct evinfo *einfo = (struct evinfo *)val;
   if (einfo->ptr != NULL) {
-    assert(einfo->ptr->type == OUT || einfo->ptr->type == RDP_OUT);
+    assert(etypeIsOUT(einfo->ptr));
     freeEvinfo(einfo->ptr);
   }
 
-  assert(einfo->type == IN || einfo->type == RDP_IN);
+  assert(etypeIsIN(einfo));
   freeEvinfo(einfo);
 }
 
 void clean(struct evinfo *einfo) {
-  if (einfo->type == IN || einfo->type == RDP_IN) {
+  if (etypeIsIN(einfo)) {
     assert(einfo->node);
 
     listNodeDestroy(evinfolist, einfo->node);
-  } else if (einfo->type == OUT || einfo->type == RDP_OUT) {
+  } else if(etypeIsOUT(einfo)) {
     assert(einfo->ptr);
     assert(!einfo->node);
     assert(einfo->ptr->node);
@@ -538,12 +546,11 @@ void clean(struct evinfo *einfo) {
 
 static int sendOrRdpWrite(struct evinfo *einfo, void *buf, size_t len,
                           int flags) {
-  if (einfo->type == RDP_IN || einfo->type == RDP_OUT) {
+  if (etypeIsRDP(einfo)) {
     return rdpWrite(einfo->c, buf, len);
-  } else if (einfo->type == IN || einfo->type == OUT) {
+  } else if (etypeIsTCP(einfo)) {
     return send(einfo->fd, buf, len, flags);
   } else {
-    exit(1);
     assert(0);
   }
 }
@@ -727,7 +734,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
     exit(EXIT_FAILURE);
   }
   einfo->type = type;
-  if (type == RDP_IN || type == RDP_OUT) {
+  if (etypeIsRDP(einfo)) {
     assert(c);
 
     if (rdpConnSetUserData(c, einfo) == -1) {
@@ -736,7 +743,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
     }
     einfo->c = c;
 
-  } else if (type == IN || type == OUT || type == RDP_LISTEN ||
+  } else if (etypeIsTCP(einfo) || type == RDP_LISTEN ||
              type == PROCURATOR_TCP_LISTEN || type == UDP_LISTEN_IN ||
              type == UDP_LISTEN_OUT) {
     assert(fd != -1);
@@ -746,7 +753,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   }
 
   einfo->node = NULL;
-  einfo->state = ES_IDLE;
+  einfo->state = ES_HALF_OPEN;
   einfo->stage = stage;
   einfo->outconnected = 0;
   einfo->bufStartIndex = 0;
@@ -763,7 +770,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   einfo->encryptor.receivedIv = 0;
 
   // Store all connection pairs in a list.
-  if (einfo->type == IN || einfo->type == RDP_IN) {
+  if (etypeIsIN(einfo)) {
     einfo->node = listNodeAddHead(evinfolist, einfo);
     if (einfo->node == NULL) {
       tlog(LL_DEBUG, "listNodeAddHead");

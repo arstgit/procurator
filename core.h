@@ -75,7 +75,8 @@ enum evtype {
   RDP_OUT,
   RDP_LISTEN
 };
-enum evstate { ES_IDLE, ES_DESTROY };
+
+enum evstate { ES_HALF_OPEN, ES_FULLY_OPEN, ES_CLOSED, ES_HALF_CLOSED };
 
 struct evinfo {
   listNode *node;
@@ -83,7 +84,7 @@ struct evinfo {
   enum evtype type;
   int fd;
   rdpConn *c;
-  char stage;
+  char stage; // Sockets stage.
   char outconnected;
   struct encryptor encryptor;
   int bufStartIndex;
