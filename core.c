@@ -360,9 +360,14 @@ inline static int evBufferRemain(struct evinfo *einfo) {
 }
 
 inline static void __evstateTo(struct evinfo *einfo, enum evstate state) {
+  if (einfo->ptr) {
+    einfo->ptr->state = state;
+  } else {
+    // to do delete.
+    assert(einfo->state == ES_HALF_OPENED && state == ES_CLOSED);
+  }
+
   einfo->state = state;
-  einfo->ptr->state = state;
-  return;
 }
 
 // ES_HALF_OPENED: Starting point. Accepted, but not received target host yet.
@@ -375,9 +380,11 @@ inline static void __evstateTo(struct evinfo *einfo, enum evstate state) {
 //  3. Received EOF from OUT handle, not RDP_IN handle.
 //  4. RDP_IN handle still have buffer to transmit.
 inline static void evstateTo(struct evinfo *einfo, enum evstate state) {
+  tlog(LL_DEBUG, "einfo->state: %d, target state: %d, einfo->ptr: %d", einfo->state, state, (einfo->ptr != NULL));
+
   assert(etypeIsRDP(einfo) || etypeIsTCP(einfo));
   assert(etypeIsIN(einfo) || etypeIsOUT(einfo));
-  assert(einfo->ptr != NULL);
+  assert(einfo->ptr != NULL || (einfo->state == ES_HALF_OPENED && state == ES_CLOSED));
 
   switch(einfo->state) {
     case ES_HALF_OPENED:
@@ -1435,7 +1442,7 @@ void eloop(char *port, char *udpPort,
             if (flag & RDP_DATA) {
               einfo = rdpConnGetUserData(conn);
               if (einfo == NULL) {
-                // It means we have called clean(einfo) in other place.
+                // It means we have called clean(einfo) in other place, maybe?
                 assert(0);
                 continue;
               }
