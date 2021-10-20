@@ -39,7 +39,7 @@ unsigned char buf[BUF_SIZE];
 unsigned char tmpBuf[TMP_BUF_SIZE];
 int serverflag;
 int connectPool[CONNECT_POOL_SIZE];
-uint64_t nowms, lastCheckConnectionAndUdp;
+uint64_t nowms, lastCheckDestroy, lastCheckIdle;
 
 // Return the UNIX time in millisecond.
 static inline uint64_t mstime(void) {
@@ -354,9 +354,102 @@ inline static int etypeIsOUT(struct evinfo *einfo) {
   return einfo->type == OUT || einfo->type == RDP_OUT;
 }
 
+inline static int evBufferRemain(struct evinfo *einfo) {
+  assert(einfo->bufStartIndex <= einfo->bufEndIndex);
+  return einfo->bufStartIndex != einfo->bufEndIndex;
+}
+
+inline static void __evstateTo(struct evinfo *einfo, enum evstate state) {
+  einfo->state = state;
+  einfo->ptr->state = state;
+  return;
+}
+
+// ES_HALF_OPENED: Starting point. Accepted, but not received target host yet.
+// ES_CONNECTING: Received target host, and started connect to it.
+// ES_OPEN: Fully connected.
+// ES_CLOSED: Mutually exclusive with ES_HALF_CLOSED.
+// ES_HALF_CLOSED: Triggered under these conditions:
+//  1. Initail state is ES_OPEN.
+//  2. In server, not local.
+//  3. Received EOF from OUT handle, not RDP_IN handle.
+//  4. RDP_IN handle still have buffer to transmit.
+inline static void evstateTo(struct evinfo *einfo, enum evstate state) {
+  assert(etypeIsRDP(einfo) || etypeIsTCP(einfo));
+  assert(etypeIsIN(einfo) || etypeIsOUT(einfo));
+  assert(einfo->ptr != NULL);
+
+  switch(einfo->state) {
+    case ES_HALF_OPENED:
+      switch(state) {
+        case ES_CONNECTING:
+        case ES_CLOSED:
+          return __evstateTo(einfo, state);
+        case ES_HALF_CLOSED:
+        case ES_OPENED:
+        case ES_HALF_OPENED:
+        default:
+          assert(0);
+      }
+      assert(0);
+    case ES_CONNECTING:
+      switch(state) {
+        case ES_OPENED:
+        case ES_CLOSED:
+          return __evstateTo(einfo, state);
+        case ES_HALF_CLOSED:
+        case ES_HALF_OPENED:
+        case ES_CONNECTING:
+        default:
+          assert(0);
+      }
+      assert(0);
+    case ES_OPENED:
+      switch(state) {
+        case ES_HALF_CLOSED:
+          assert(evBufferRemain(einfo));
+          assert(serverflag);
+          assert(einfo->type == OUT);
+        case ES_CLOSED:
+          return __evstateTo(einfo, state);
+        case ES_CONNECTING:
+        case ES_HALF_OPENED:
+        case ES_OPENED:
+        default:
+          assert(0);
+      }
+      assert(0);
+    case ES_CLOSED:
+      switch(state) {
+        case ES_HALF_OPENED:
+        case ES_CONNECTING:
+        case ES_OPENED:
+        case ES_CLOSED:
+        case ES_HALF_CLOSED:
+        default:
+          assert(0);
+      }
+      assert(0);
+    case ES_HALF_CLOSED:
+      switch(state) {
+        case ES_CLOSED:
+        case ES_HALF_OPENED:
+          return __evstateTo(einfo, state);
+        case ES_CONNECTING:
+        case ES_OPENED:
+        case ES_HALF_CLOSED:
+        default:
+          assert(0);
+      }
+      break;
+    default:
+      assert(0);
+  }
+}
+
 void freeEvinfo(struct evinfo *einfo) {
   if (einfo->bufEndIndex - einfo->bufStartIndex > 0) {
-    tlog(LL_VERBOSE, "cleaning dirty bytes: %d",
+    tlog(LL_VERBOSE, "free dirty bytes: %d",
          einfo->bufEndIndex - einfo->bufStartIndex);
   }
 
@@ -371,7 +464,7 @@ void freeEvinfo(struct evinfo *einfo) {
     }
   } else if(etypeIsTCP(einfo)) {
     if (close(einfo->fd) == -1) {
-      perror("clean: close");
+      perror("freeEvinfo: close");
       exit(EXIT_FAILURE);
     }
   } else {
@@ -464,7 +557,7 @@ int udpRelayDictGetByKey(void *key, struct sockaddr_storage **dst_addr,
   return 0;
 }
 
-int udpRelayDictSweep() {
+inline static void udpRelayDictSweep() {
   dictIteratorRewind(udpRelayDictIterator);
 
   dictEntry *entry;
@@ -489,11 +582,22 @@ int udpRelayDictSweep() {
     tlog(LL_DEBUG, "udpRelayDict entries, swept: %d, remain: %d", swept,
          remain);
   }
-
-  return 0;
 }
 
-int connectionSweep() {
+inline static void evDestroy() {
+  listNode *node;
+
+  listIteratorRewind(evinfolist, evinfolistIter);
+  while ((node = listIteratorNext(evinfolistIter))) {
+    struct evinfo *curinfo = node->value;
+
+    if (curinfo->state == ES_CLOSED) {
+      clean(curinfo);
+    }
+  }
+}
+
+inline static void connectionSweep() {
   listNode *node;
   int swept = 0, remain = 0;
 
@@ -502,6 +606,7 @@ int connectionSweep() {
     struct evinfo *curinfo = node->value;
 
     if (nowms - curinfo->last_active > MAX_IDLE_TIME && (curinfo->ptr == NULL || nowms - curinfo->ptr->last_active > MAX_IDLE_TIME)) {
+      evstateTo(curinfo, ES_CLOSED);
       clean(curinfo);
 
       swept++;
@@ -513,8 +618,6 @@ int connectionSweep() {
   if (swept != 0 || remain != 0) {
     tlog(LL_DEBUG, "connection, swept: %d, remain: %d", swept, remain);
   }
-
-  return 0;
 }
 
 void evinfoPairFree(void *val) {
@@ -544,7 +647,7 @@ void clean(struct evinfo *einfo) {
   }
 }
 
-static int sendOrRdpWrite(struct evinfo *einfo, void *buf, size_t len,
+inline static int sendOrRdpWrite(struct evinfo *einfo, void *buf, size_t len,
                           int flags) {
   if (etypeIsRDP(einfo)) {
     return rdpWrite(einfo->c, buf, len);
@@ -555,7 +658,7 @@ static int sendOrRdpWrite(struct evinfo *einfo, void *buf, size_t len,
   }
 }
 
-static int trySend(struct evinfo *einfo) {
+inline static int trySend(struct evinfo *einfo) {
   ssize_t numSend;
   size_t len;
   unsigned char *buf;
@@ -753,7 +856,7 @@ struct evinfo *eadd(enum evtype type, int fd, int stage, struct evinfo *ptr,
   }
 
   einfo->node = NULL;
-  einfo->state = ES_HALF_OPEN;
+  einfo->state = ES_HALF_OPENED;
   einfo->stage = stage;
   einfo->outconnected = 0;
   einfo->bufStartIndex = 0;
@@ -838,6 +941,8 @@ int connOut(struct evinfo *einfo, char *outhost, char *outport) {
         eadd(OUT, outfd, -1, einfo, EPOLLOUT | EPOLLIN | EPOLLET, NULL);
   }
 
+  evstateTo(einfo, ES_CONNECTING);
+
   return 0;
 }
 
@@ -912,7 +1017,7 @@ static int handleIn(struct evinfo *einfo,
       }
     }
     if (n == 0) {
-      return -1;
+      return RETEOF;
     }
 
     if (n > 0) {
@@ -1012,12 +1117,18 @@ int afterSleep() {
 }
 
 int beforeSleep() {
-  if (nowms - lastCheckConnectionAndUdp >= CHECK_TIMEOUT_INTERVAL) {
+  if (nowms - lastCheckIdle >= CHECK_IDLE_INTERVAL) {
     udpRelayDictSweep();
 
     connectionSweep();
 
-    lastCheckConnectionAndUdp = nowms;
+    lastCheckIdle = nowms;
+  }
+
+  if (nowms - lastCheckDestroy >= CHECK_DESTROY_INTERVAL) {
+    evDestroy();
+
+    lastCheckIdle = nowms;
   }
 
   int timeout;
@@ -1050,6 +1161,7 @@ void eloop(char *port, char *udpPort,
   struct evinfo *einfo;
   enum evtype etype;
   struct epoll_event ev, evlist[MAX_EVENTS];
+  int ret;
 
   memset(&sa, 0, sizeof(sa));
   sa.sa_flags = 0;
@@ -1132,14 +1244,14 @@ void eloop(char *port, char *udpPort,
   tlog(LL_NOTICE, "Version: %s", version);
   tlog(LL_NOTICE, "started!");
 
-  nowms = lastCheckConnectionAndUdp = mstime();
+  nowms = mstime();
+  lastCheckIdle = lastCheckDestroy = nowms;
 
   for (;;) {
     int timeout;
     timeout = beforeSleep();
     assert(timeout > 0);
-    nfds = epoll_wait(efd, evlist, 1, timeout);
-    // nfds = epoll_wait(efd, evlist, MAX_EVENTS, -1);
+    nfds = epoll_wait(efd, evlist, MAX_EVENTS, timeout);
     // Closing laptop lid can trigger EINTR.
     if (nfds == -1 && errno != EINTR) {
       perror("epoll_wait");
@@ -1152,15 +1264,23 @@ void eloop(char *port, char *udpPort,
       einfo = (struct evinfo *)evlist[n].data.ptr;
       etype = einfo->type;
 
+      // This is a loose check, einfo might not be connection einfo. And in RDP handle we have to check again.
+      if (einfo->state == ES_CLOSED) {
+        tlog(LL_DEBUG, "epoll_wait gave a ES_CLOSED evinfo.");
+        continue;
+      }
+
       if (evlist[n].events & EPOLLERR) {
-        tlog(LL_DEBUG, "cleaning. EPOLLERR type: %d, buf: %d, %d, %d.", etype,
+        tlog(LL_DEBUG, "EPOLLERR, type: %d, buf: %d, %d, %d.", etype,
              einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
+        evstateTo(einfo, ES_CLOSED);
         clean(einfo);
         continue;
       }
       if (evlist[n].events & EPOLLHUP) {
-        tlog(LL_DEBUG, "cleaning. EPOLLHUP type: %d, buf: %d, %d, %d\n", etype,
+        tlog(LL_DEBUG, "EPOLLHUP type: %d, buf: %d, %d, %d.", etype,
              einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
+        evstateTo(einfo, ES_CLOSED);
         clean(einfo);
         continue;
       }
@@ -1169,22 +1289,28 @@ void eloop(char *port, char *udpPort,
         if (etype == OUT) {
           if (einfo->outconnected == 0) {
             if (connOutConnected(einfo) == -1) {
-              tlog(LL_DEBUG, "cleaning, not connected.");
+              tlog(LL_DEBUG, "not connected.");
+
+              evstateTo(einfo, ES_CLOSED);
               clean(einfo);
               continue;
             } else {
               einfo->outconnected = 1;
+              evstateTo(einfo, ES_OPENED);
             }
           }
 
           if (trySend(einfo) == -1) {
-            tlog(LL_DEBUG, "cleaning. trySend: eloop");
+            tlog(LL_DEBUG, "trySend: eloop");
+
+            evstateTo(einfo, ES_CLOSED);
             clean(einfo);
             continue;
           }
         } else if (etype == IN) {
           if (trySend(einfo) == -1) {
-            tlog(LL_DEBUG, "cleaning. trySend: eloop");
+            tlog(LL_DEBUG, "trySend: eloop");
+            evstateTo(einfo, ES_CLOSED);
             clean(einfo);
             continue;
           }
@@ -1213,17 +1339,50 @@ void eloop(char *port, char *udpPort,
           }
           continue;
         } else if (etype == IN) {
-          if (handleIn(einfo, handleInData) == -1) {
-            tlog(LL_DEBUG, "handleIn, etype IN");
-            clean(einfo);
-            continue;
+          ret = handleIn(einfo, handleInData);
+
+          switch (ret) {
+            case -1:
+            case RETEOF:
+              tlog(LL_DEBUG, "handleIn, etype IN, ret: %d", ret);
+              evstateTo(einfo, ES_CLOSED);
+              clean(einfo);
+              break;
+            case 0:
+              break;
+            default:
+              assert(0);
           }
+
+          continue;
         } else if (etype == OUT) {
-          if (handleIn(einfo, handleOutData) == -1) {
-            tlog(LL_DEBUG, "handleIN etype OUT");
-            clean(einfo);
-            continue;
+          ret = handleIn(einfo, handleOutData);
+
+          switch (ret) {
+            case -1:
+              tlog(LL_DEBUG, "handleIn, etype OUT, ret: %d", ret);
+              evstateTo(einfo, ES_CLOSED);
+              clean(einfo);
+              break;
+            case RETEOF:
+              tlog(LL_DEBUG, "handleIn, etype OUT, ret: %d", ret);
+
+              // See evstateTo() for ES_HALF_CLOSED.
+              if (serverflag && evBufferRemain(einfo)) {
+                evstateTo(einfo, ES_HALF_CLOSED);
+              } else {
+                evstateTo(einfo, ES_CLOSED);
+              }
+
+              clean(einfo);
+              break;
+            case 0:
+              break;
+            default:
+              assert(0);
           }
+
+          continue;
         } else if (etype == RDP_LISTEN) {
           int flag;
           rdpConn *conn;
@@ -1243,6 +1402,12 @@ void eloop(char *port, char *udpPort,
               einfo = rdpConnGetUserData(conn);
               assert(einfo != NULL);
 
+              if (einfo->state == ES_CLOSED) {
+                tlog(LL_DEBUG, "got RDP_CONN_RRROR from a ES_CLOSED einfo");
+                continue;
+              }
+
+              evstateTo(einfo, ES_CLOSED);
               clean(einfo);
 
               continue;
@@ -1252,8 +1417,17 @@ void eloop(char *port, char *udpPort,
               einfo = rdpConnGetUserData(conn);
               assert(einfo != NULL);
 
+              if (einfo->state == ES_CLOSED) {
+                tlog(LL_DEBUG, "got RDP_CONNECTED from a ES_CLOSED einfo");
+                continue;
+              }
+
+              evstateTo(einfo, ES_OPENED);
+
               if (trySend(einfo) == -1) {
-                tlog(LL_DEBUG, "cleaning. trySend: RDP_OUT connected");
+                tlog(LL_DEBUG, "trySend: RDP_CONNECTED.");
+                
+                evstateTo(einfo, ES_CLOSED);
                 clean(einfo);
                 continue;
               }
@@ -1261,10 +1435,11 @@ void eloop(char *port, char *udpPort,
 
             if (flag & RDP_ACCEPT) {
               // Only accept a connection on server end.
-              if (serverflag == 1) {
+              if (serverflag) {
                 eadd(RDP_IN, 0, 0, NULL, EPOLLOUT | EPOLLIN | EPOLLET, conn);
               } else {
                 rdpConnClose(conn);
+                assert(0);
               }
             }
 
@@ -1272,23 +1447,38 @@ void eloop(char *port, char *udpPort,
               einfo = rdpConnGetUserData(conn);
               if (einfo == NULL) {
                 // It means we have called clean(einfo) in other place.
+                assert(0);
+                continue;
+              }
+
+              if (einfo->state == ES_CLOSED) {
+                tlog(LL_DEBUG, "got RDP_DATA from a ES_CLOSED einfo");
                 continue;
               }
 
               if (n == 0) {
-                tlog(LL_DEBUG, "cleaning. rdp data EOF");
-                // EOF
+                tlog(LL_DEBUG, "rdp data EOF");
+
+                // See evstateTo for ES_HALF_CLOSED.
+                if (serverflag && evBufferRemain(einfo)) {
+                  evstateTo(einfo, ES_HALF_CLOSED);
+                } else {
+                  evstateTo(einfo, ES_CLOSED);
+                }
                 clean(einfo);
               } else if (n > 0) {
                 if (einfo->type == RDP_IN) {
                   if (handleInBuf(einfo, handleInData, buf, n) == -1) {
-                    tlog(LL_DEBUG, "cleaning. handleInBuf RDP_IN");
+                    tlog(LL_DEBUG, "handleInBuf RDP_IN");
+
+                    evstateTo(einfo, ES_CLOSED);
                     clean(einfo);
                   }
                 } else if (einfo->type == RDP_OUT) {
                   assert(serverflag == 0);
                   if (handleInBuf(einfo, handleOutData, buf, n) == -1) {
-                    tlog(LL_DEBUG, "cleaning. handleInBuf RDP_OUT");
+                    tlog(LL_DEBUG, "handleInBuf RDP_OUT");
+                    evstateTo(einfo, ES_CLOSED);
                     clean(einfo);
                   }
                 } else {
@@ -1306,11 +1496,18 @@ void eloop(char *port, char *udpPort,
               einfo = rdpConnGetUserData(conn);
               if (einfo == NULL) {
                 // It means we have called clean(einfo) in other place.
+                assert(0);
+                continue;
+              }
+
+              if (einfo->state == ES_CLOSED) {
+                tlog(LL_DEBUG, "got RDP_POLLOUT from a ES_CLOSED einfo");
                 continue;
               }
 
               if (trySend(einfo) == -1) {
-                tlog(LL_DEBUG, "cleaning. trySend: eloop RDP_POLLOUT");
+                tlog(LL_DEBUG, "trySend: eloop RDP_POLLOUT");
+                evstateTo(einfo, ES_CLOSED);
                 clean(einfo);
               }
             }

@@ -48,13 +48,17 @@
 #define BUF_FACTOR2 16
 #define CONNECT_POOL_SIZE 2
 
-#define CHECK_TIMEOUT_INTERVAL (10 * 1000)
+#define CHECK_IDLE_INTERVAL (10 * 1000)
+#define CHECK_DESTROY_INTERVAL (200)
 
 // A connection is allowed idle MAX_IDLE_TIME seconds at most.
 #define MAX_IDLE_TIME (30 * 1000)
 
 // UDP relay entry registration timeout.
 #define MAX_UDP_IDLE_TIME (30 * 1000)
+
+// Function return value.
+#define RETEOF (1)
 
 extern char *version;
 extern char *remoteHost;
@@ -76,7 +80,7 @@ enum evtype {
   RDP_LISTEN
 };
 
-enum evstate { ES_HALF_OPEN, ES_FULLY_OPEN, ES_CLOSED, ES_HALF_CLOSED };
+enum evstate { ES_HALF_OPENED, ES_CONNECTING, ES_OPENED, ES_CLOSED, ES_HALF_CLOSED };
 
 struct evinfo {
   listNode *node;
