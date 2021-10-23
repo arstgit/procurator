@@ -11,6 +11,8 @@ CFLAGS = ${CFLAGS_${BUILD}}
 
 all: procurator-local procurator-server
 
+static: procurator-local-static procurator-server-static
+
 %.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -25,6 +27,12 @@ procurator-local: local.o core.o crypto.o librdp/librdp.a liblist/list.o
 
 procurator-server: server.o core.o crypto.o librdp/librdp.a liblist/list.o
 	$(CC) -o $@ $^ -lcrypto
+
+procurator-local-static: local.o core.o crypto.o librdp/librdp.a liblist/list.o
+	$(CC) -o $@ $^ -l:libcrypto.a -ldl -lpthread
+
+procurator-server-static: server.o core.o crypto.o librdp/librdp.a liblist/list.o
+	$(CC) -o $@ $^ -l:libcrypto.a -ldl -lpthread
 
 ctest: ctest.o
 	$(CC) -o $@ $^
@@ -48,5 +56,5 @@ install:
 
 .PHONY: clean
 clean:
-	rm -f *.o **/*.o procurator-local procurator-server ctest
+	rm -f *.o **/*.o procurator-local-static procurator-server-static procurator-local procurator-server ctest
 	cd librdp/ && make clean

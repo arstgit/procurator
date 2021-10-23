@@ -5,6 +5,8 @@ core
 
 procurator-local
 procurator-server
+procurator-local-static
+procurator-server-static
 ctest
 
 .vscode
