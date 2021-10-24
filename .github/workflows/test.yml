@@ -16,5 +16,10 @@ jobs:
       uses: actions/checkout@v2
       with:
         submodules: 'recursive'
-    - name: make test
-      run: make test
+    - name: test
+      run: |
+        mkdir build && cd build
+        autoreconf --install ..
+        ../configure
+        make
+        ./procurator-test
