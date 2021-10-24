@@ -1,13 +1,18 @@
 *.swp
 *.o
 
-core
+build
 
-procurator-local
-procurator-server
-procurator-local-static
-procurator-server-static
-ctest
+Makefile.in
+aclocal.m4
+autom4te.cache/
+compile
+config.h.in
+configure
+depcomp
+install-sh
+missing
+*~
 
 .vscode
 .ccls-cache
