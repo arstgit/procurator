@@ -414,7 +414,7 @@ inline static void evstateTo(struct evinfo *einfo, enum evstate state) {
     case ES_OPENED:
       switch(state) {
         case ES_HALF_CLOSED:
-          assert(evBufferRemain(einfo));
+          assert(evBufferRemain(einfo->ptr));
           assert(serverflag);
           assert(einfo->type == OUT);
         case ES_CLOSED:
@@ -1367,7 +1367,8 @@ void eloop(char *port, char *udpPort,
               tlog(LL_DEBUG, "handleIn, etype OUT, ret: %d", ret);
 
               // See evstateTo() for ES_HALF_CLOSED.
-              if (serverflag && evBufferRemain(einfo)) {
+              assert(einfo->ptr);
+              if (serverflag && evBufferRemain(einfo->ptr)) {
                 evstateTo(einfo, ES_HALF_CLOSED);
               } else {
                 evstateTo(einfo, ES_CLOSED);
