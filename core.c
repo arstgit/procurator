@@ -442,9 +442,11 @@ inline static void evstateTo(struct evinfo *einfo, enum evstate state) {
         case ES_CLOSED:
         case ES_HALF_OPENED:
           return __evstateTo(einfo, state);
+        case ES_HALF_CLOSED:
+          // todo, received TWO EOF from remote server, why? 
+          return;
         case ES_CONNECTING:
         case ES_OPENED:
-        case ES_HALF_CLOSED:
         default:
           assert(0);
       }
