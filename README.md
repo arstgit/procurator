@@ -2,13 +2,7 @@
 
 [![Test Status](https://github.com/derekchuank/procurator/workflows/Test/badge.svg)](https://github.com/derekchuank/procurator/actions)
 
-## Super simple to use
-
 Socks5 proxy client and server. UDP relay support. More aggressive packet sending strategy, using `librdp`.
-
-## Design
-
-[www.tiaoxingyubolang.com](https://www.tiaoxingyubolang.com/article/2020-03-22_procurator1)
 
 ## Prerequisites
 Environment: 
@@ -21,8 +15,10 @@ Libraries:
 ## Compile & Install
 
 ```
+  $ autoreconf
+  $ mkdir build && cd build
+  $ configure ..
   $ make
-  $ make install
 ```
 
 ## Usage
