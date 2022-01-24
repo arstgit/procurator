@@ -15,6 +15,8 @@ char *localPort;
 char *localUdpPort;
 char *password;
 
+char* evstate_str[] = {"ES_HALF_OPENED", "ES_CONNECTING", "ES_OPENED", "ES_CLOSED", "ES_HALF_CLOSED"};
+
 // Global connection pairs.
 list *evinfolist;
 listIterator *evinfolistIter;
@@ -380,7 +382,7 @@ inline static void __evstateTo(struct evinfo *einfo, enum evstate state) {
 //  3. Received EOF from OUT handle, not RDP_IN handle.
 //  4. RDP_IN handle still have buffer to transmit.
 inline static void evstateTo(struct evinfo *einfo, enum evstate state) {
-  tlog(LL_DEBUG, "einfo->state: %d, target state: %d, einfo->ptr: %d", einfo->state, state, (einfo->ptr != NULL));
+  tlog(LL_DEBUG, "einfo->state: %s, target state: %s, einfo->ptr: %d", evstate_str[einfo->state], evstate_str[state], (einfo->ptr != NULL));
 
   assert(etypeIsRDP(einfo) || etypeIsTCP(einfo));
   assert(etypeIsIN(einfo) || etypeIsOUT(einfo));
