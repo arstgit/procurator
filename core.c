@@ -436,6 +436,28 @@ inline static void evstateTo(struct evinfo *einfo, enum evstate state) {
         case ES_CLOSED:
         case ES_HALF_CLOSED:
         default:
+	/* inetConnect, connOut server: Function not implemented
+	[procurator-server] 16 Feb 2022 14:24:37.738 . connOut error
+	[procurator-server] 16 Feb 2022 14:24:37.738 . handleInBuf: handleInData
+	[procurator-server] 16 Feb 2022 14:24:37.738 . handleInBuf RDP_IN
+	[procurator-server] 16 Feb 2022 14:24:37.738 . einfo->state: ES_HALF_OPENED, target state: ES_CLOSED, einfo->ptr: 0
+	[procurator-server] 16 Feb 2022 14:24:37.755 . handleIn, etype OUT, ret: 1
+	[procurator-server] 16 Feb 2022 14:24:37.755 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1
+	[procurator-server] 16 Feb 2022 14:24:37.755 . handleIn, etype OUT, ret: 1
+	[procurator-server] 16 Feb 2022 14:24:37.756 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1
+	[procurator-server] 16 Feb 2022 14:24:37.756 . handleIn, etype OUT, ret: 1
+	[procurator-server] 16 Feb 2022 14:24:37.756 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1
+	[procurator-server] 16 Feb 2022 14:24:37.756 . handleIn, etype OUT, ret: 1
+	[procurator-server] 16 Feb 2022 14:24:37.756 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1
+	[procurator-server] 16 Feb 2022 14:24:37.756 . handleIn, etype OUT, ret: 1
+	[procurator-server] 16 Feb 2022 14:24:37.756 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1
+	[procurator-server] 16 Feb 2022 14:24:37.756 . EPOLLERR, type: 4, buf: 0, 0, 517.
+	[procurator-server] 16 Feb 2022 14:24:37.756 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1
+	[procurator-server] 16 Feb 2022 14:24:37.756 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1
+	[procurator-server] 16 Feb 2022 14:24:37.756 . einfo->state: ES_CLOSED, target state: ES_CLOSED, einfo->ptr: 1
+	procurator-server: ../core.c:439: evstateTo: Assertion `0' failed.
+	*/
+	
           assert(0);
       }
       assert(0);
@@ -1128,6 +1150,7 @@ int afterSleep() {
 
 int beforeSleep() {
   if (nowms - lastCheckIdle >= CHECK_IDLE_INTERVAL) {
+    tlog(LL_DEBUG, "sweeping.");
     udpRelayDictSweep();
 
     connectionSweep();
