@@ -1261,8 +1261,8 @@ void eloop(char *port, char *udpPort,
                          EPOLLIN | EPOLLOUT | EPOLLET, NULL);
 
   // Udp out connect port.
-  char outUdpPort[5];
-  snprintf(outUdpPort, 5, "%d", atoi(udpPort) + 1);
+  char outUdpPort[6];
+  snprintf(outUdpPort, 6, "%d", atoi(udpPort) + 1);
   listenUDPOutfd = inetListenUDP(outUdpPort, 80, NULL);
   if (listenUDPOutfd == -1) {
     perror("inetListenUDPOut");
