@@ -41,7 +41,7 @@
 // Default maximum length of log messages.
 #define LOG_MAX_LEN 1024
 
-#define BUF_SIZE (212992 * 16)
+#define BUF_SIZE (16 * 1024 * 1024)
 #define TMP_BUF_SIZE BUF_SIZE
 #define MAX_EVENTS 20
 #define BUF_FACTOR1 1
