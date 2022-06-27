@@ -1180,7 +1180,9 @@ int afterSleep() {
   return 0;
 }
 
-int beforeSleep() {
+int beforeSleep(int waitTimeoutFlag) {
+  int timeout;
+
   if (nowms - lastCheckIdle >= CHECK_IDLE_INTERVAL) {
     tlog(LL_DEBUG, "sweeping.");
     udpRelayDictSweep();
@@ -1196,10 +1198,14 @@ int beforeSleep() {
     lastCheckIdle = nowms;
   }
 
-  int timeout;
-  if ((timeout = rdpSocketIntervalAction(rdpS)) == -1) {
-    tlog(LL_DEBUG, "rdpSocketIntervalAction");
-    exit(EXIT_FAILURE);
+  // Ensure rdpSocketIntervalAction has lower priority than socket activity.
+  if (waitTimeoutFlag) {
+    if ((timeout = rdpSocketIntervalAction(rdpS)) == -1) {
+      tlog(LL_DEBUG, "rdpSocketIntervalAction");
+      exit(EXIT_FAILURE);
+    }
+  } else {
+    timeout = 0;
   }
   return timeout;
 }
@@ -1227,6 +1233,8 @@ void eloop(char *port, char *udpPort,
   enum evtype etype;
   struct epoll_event ev, evlist[MAX_EVENTS];
   int ret;
+  int waitTimeoutFlag;
+  int timeout;
 
   memset(&sa, 0, sizeof(sa));
   sa.sa_flags = 0;
@@ -1312,16 +1320,17 @@ void eloop(char *port, char *udpPort,
   nowms = mstime();
   lastCheckIdle = lastCheckDestroy = nowms;
 
+  waitTimeoutFlag = 0;
   for (;;) {
-    int timeout;
-    timeout = beforeSleep();
-    assert(timeout > 0);
+    timeout = beforeSleep(waitTimeoutFlag);
     nfds = epoll_wait(efd, evlist, MAX_EVENTS, timeout);
     // Closing laptop lid can trigger EINTR.
     if (nfds == -1 && errno != EINTR) {
       perror("epoll_wait");
       exit(EXIT_FAILURE);
     }
+
+    waitTimeoutFlag = nfds == 0 ? 1 : 0;
 
     afterSleep();
 
