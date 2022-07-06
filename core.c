@@ -1348,6 +1348,13 @@ void eloop(char *port, char *udpPort,
         tlog(LL_DEBUG, "EPOLLERR, type: %d, buf: %d, %d, %d.", etype,
              einfo->bufStartIndex, einfo->bufEndIndex, einfo->bufLen);
         evstateTo(einfo, ES_CLOSED);
+
+        int error = 0;
+        socklen_t errlen = sizeof(error);
+        struct evinfo *einfo = (struct evinfo *)evlist[n].data.ptr;
+        if (getsockopt(einfo->fd, SOL_SOCKET, SO_ERROR, (void *)&error, &errlen) == 0) {
+            tlog(LL_DEBUG, "error: %s", strerror(error));
+        }
         continue;
       }
       if (evlist[n].events & EPOLLHUP) {
