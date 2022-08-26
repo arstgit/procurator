@@ -436,22 +436,6 @@ inline static void evstateTo(struct evinfo *einfo, enum evstate state) {
         case ES_CLOSED:
         case ES_HALF_CLOSED:
         default:
-	/* inetConnect, connOut server: Function not implemented
-	
-
-[procurator-server] 18 May 2022 01:52:44.395 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1, ptr of einfo: 0x270db50
-[procurator-server] 18 May 2022 01:52:44.395 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1, ptr of einfo: 0x29f3510
-[procurator-server] 18 May 2022 01:52:44.395 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1, ptr of einfo: 0x21062d0
-[procurator-server] 18 May 2022 01:52:44.395 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1, ptr of einfo: 0x1f8cca0
-[procurator-server] 18 May 2022 01:52:44.395 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1, ptr of einfo: 0x1fca270
-[procurator-server] 18 May 2022 01:52:44.396 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1, ptr of einfo: 0x270c3b0
-[procurator-server] 18 May 2022 01:52:44.396 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1, ptr of einfo: 0x1fcce00
-[procurator-server] 18 May 2022 01:52:44.396 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1, ptr of einfo: 0x1f96780
-[procurator-server] 18 May 2022 01:52:44.396 . sweeping.
-[procurator-server] 18 May 2022 01:52:44.396 . einfo->state: ES_CONNECTING, target state: ES_CLOSED, einfo->ptr: 1, ptr of einfo: 0x1fd2c30
-[procurator-server] 18 May 2022 01:52:44.396 . einfo->state: ES_CLOSED, target state: ES_CLOSED, einfo->ptr: 1, ptr of einfo: 0x1fabc60
-procurator-server: ../core.c:461: evstateTo: Assertion `0' failed.
-	*/
           assert(0);
       }
       assert(0);
@@ -634,44 +618,10 @@ inline static void connectionSweep() {
     struct evinfo *curinfo = node->value;
 
     if (nowms - curinfo->last_active > MAX_IDLE_TIME && (curinfo->ptr == NULL || nowms - curinfo->ptr->last_active > MAX_IDLE_TIME)) {
-/*
-  0 [procurator-server] 13 Mar 2022 07:01:27.283 . einfo->state: ES_HALF_OPENED, target state: ES_CONNECTING, einfo->ptr: 1
-  1 [procurator-server] 13 Mar 2022 07:01:27.286 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1
-  2 [procurator-server] 13 Mar 2022 07:01:27.286 . handleIn, etype OUT, ret: 1
-  3 [procurator-server] 13 Mar 2022 07:01:27.286 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1
-  4 [procurator-server] 13 Mar 2022 07:01:27.286 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1
-  5 [procurator-server] 13 Mar 2022 07:01:27.287 . handleIn, etype OUT, ret: 1
-  6 [procurator-server] 13 Mar 2022 07:01:27.287 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1
-  7 [procurator-server] 13 Mar 2022 07:01:27.287 . not connected.
-  8 [procurator-server] 13 Mar 2022 07:01:27.287 . einfo->state: ES_CONNECTING, target state: ES_CLOSED, einfo->ptr: 1
-  9 [procurator-server] 13 Mar 2022 07:01:27.287 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1
- 10 [procurator-server] 13 Mar 2022 07:01:27.287 . handleIn, etype OUT, ret: 1
- 11 [procurator-server] 13 Mar 2022 07:01:27.287 . einfo->state: ES_OPENED, target state: ES_CLOSED, einfo->ptr: 1
- 12 [procurator-server] 13 Mar 2022 07:01:27.287 . not connected.
- 13 [procurator-server] 13 Mar 2022 07:01:27.287 . einfo->state: ES_CONNECTING, target state: ES_CLOSED, einfo->ptr: 1
- 14 [procurator-server] 13 Mar 2022 07:01:27.287 . not connected.
- 15 [procurator-server] 13 Mar 2022 07:01:27.287 . einfo->state: ES_CONNECTING, target state: ES_CLOSED, einfo->ptr: 1
- 16 [procurator-server] 13 Mar 2022 07:01:27.287 . EPOLLERR, type: 4, buf: 0, 0, 0.
- 17 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_CLOSED, einfo->ptr: 1
- 18 [procurator-server] 13 Mar 2022 07:01:27.288 . not connected.
- 19 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_CLOSED, einfo->ptr: 1
- 20 [procurator-server] 13 Mar 2022 07:01:27.288 . not connected.
- 21 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_CLOSED, einfo->ptr: 1
- 22 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1
- 23 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1
- 24 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1
- 25 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1
- 26 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1
- 27 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1
- 28 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_OPENED, einfo->ptr: 1
- 29 [procurator-server] 13 Mar 2022 07:01:27.288 . sweeping.
- 30 [procurator-server] 13 Mar 2022 07:01:27.288 . udpRelayDict entries, swept: 1, remain: 0
- 31 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CONNECTING, target state: ES_CLOSED, einfo->ptr: 1
- 32 [procurator-server] 13 Mar 2022 07:01:27.288 . einfo->state: ES_CLOSED, target state: ES_CLOSED, einfo->ptr: 1
- 33 procurator-server: ../core.c:461: evstateTo: Assertion `0' failed.
- */
-      //todo deplicated close?
-      evstateTo(curinfo, ES_CLOSED);
+      //deplicated close may happen if EPOLLERR/EPOLLUP/connecting failed occured after a idle.
+      if (curinfo->state != ES_CLOSED) {
+          evstateTo(curinfo, ES_CLOSED);
+      }
 
       swept++;
     } else {
