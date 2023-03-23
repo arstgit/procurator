@@ -1213,7 +1213,7 @@ void eloop(char *port, char *udpPort,
   }
 
   // Local and Server are connected via rdp protocol.
-  rdpS = rdpSocketCreate(1, "::", port);
+  rdpS = rdpSocketCreate(1, "0.0.0.0", port);
   if (rdpS == NULL) {
     tlog(LL_DEBUG, "rdpSocketCreate");
     exit(EXIT_FAILURE);
